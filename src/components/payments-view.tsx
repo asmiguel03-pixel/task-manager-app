@@ -6,12 +6,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  FileUp,
+  FileCheck,
   Pencil,
   Plus,
   Search,
   TriangleAlert,
-  Wallet,
+  Landmark,
   X,
 } from "lucide-react";
 import { usePayments, type PaymentPatch } from "@/hooks/use-payments";
@@ -239,7 +239,7 @@ export function PaymentsView({ toast }: { toast: (message: string, kind?: "succe
         </div>
         <div className="flex flex-wrap gap-2 lg:ml-auto">
           <button type="button" className={btnGhost} onClick={() => setImporting(true)}>
-            <FileUp className="size-4" aria-hidden />
+            <FileCheck className="size-4" aria-hidden />
             Importar
           </button>
           <button type="button" className={btnGhost} onClick={download} disabled={!monthEntries.length}>
@@ -267,7 +267,7 @@ export function PaymentsView({ toast }: { toast: (message: string, kind?: "succe
       ) : monthEntries.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-300 px-6 py-12 text-center dark:border-zinc-700">
           <span className="flex size-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400">
-            <Wallet className="size-6" aria-hidden />
+            <Landmark className="size-6" aria-hidden />
           </span>
           <div>
             <p className="font-semibold">
@@ -286,7 +286,7 @@ export function PaymentsView({ toast }: { toast: (message: string, kind?: "succe
               </button>
             )}
             <button type="button" className={btnGhost} onClick={() => setImporting(true)}>
-              <FileUp className="size-4" aria-hidden />
+              <FileCheck className="size-4" aria-hidden />
               Importar planilha
             </button>
           </div>

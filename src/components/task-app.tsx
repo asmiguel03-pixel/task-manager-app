@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, ListChecks, LogOut, Menu, Plus, SearchX, Wallet, X } from "lucide-react";
+import { Download, Landmark, ListChecks, LogOut, Menu, Plus, SearchX, X } from "lucide-react";
 import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
@@ -207,7 +207,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
           {(
             [
               ["tarefas", "Tarefas", ListChecks],
-              ["pagamentos", "Controle de pagamentos", Wallet],
+              ["pagamentos", "Controle de pagamentos", Landmark],
             ] as const
           ).map(([value, label, Icon]) => (
             <li key={value}>

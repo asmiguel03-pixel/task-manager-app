@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { FileSpreadsheet, TriangleAlert } from "lucide-react";
+import { FileCheck, TriangleAlert } from "lucide-react";
 import { monthLabel } from "@/lib/payment-domain";
 import { parsePaymentWorkbook, type ImportedMonth } from "@/lib/payment-import";
 import { PAYMENT_SHEETS, SHEET_LABELS, type Payment, type PaymentInput, type PaymentSheet } from "@/lib/payment-schema";
@@ -92,7 +92,7 @@ export function PaymentImportDialog({
           htmlFor={`${uid}-file`}
           className="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed border-zinc-300 p-4 hover:border-indigo-400 dark:border-zinc-700"
         >
-          <FileSpreadsheet className="size-6 shrink-0 text-emerald-600" aria-hidden />
+          <FileCheck className="size-6 shrink-0 text-emerald-600" aria-hidden />
           <span className="min-w-0 truncate">{fileName || "Clique para escolher a planilha (.xlsx)"}</span>
           <input
             id={`${uid}-file`}
