@@ -19,8 +19,8 @@ const isIOS = () =>
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
 /**
- * Registra o service worker e mostra o botão "Instalar app" quando o navegador
- * permite instalar. No iPhone/iPad (sem instalação automática) mostra como fazer.
+ * Mostra o botão "Instalar app" quando o navegador permite instalar
+ * (o service worker é registrado pelo layout). No iPhone/iPad (sem instalação automática) mostra como fazer.
  */
 export function InstallAppButton() {
   const [prompt, setPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -29,21 +29,17 @@ export function InstallAppButton() {
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
-    }
     if (isStandalone()) return;
+    // O aviso do navegador é capturado cedo pelo script do layout.
+    const w = window as Window & { __installPrompt?: BeforeInstallPromptEvent | null };
+    const sync = () => setPrompt(w.__installPrompt ?? null);
+    sync();
     if (isIOS()) setIosHint(true);
-
-    const onPrompt = (e: Event) => {
-      e.preventDefault();
-      setPrompt(e as BeforeInstallPromptEvent);
-    };
     const onInstalled = () => setPrompt(null);
-    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("installprompt-ready", sync);
     window.addEventListener("appinstalled", onInstalled);
     return () => {
-      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("installprompt-ready", sync);
       window.removeEventListener("appinstalled", onInstalled);
     };
   }, []);
@@ -63,6 +59,7 @@ export function InstallAppButton() {
     if (prompt) {
       await prompt.prompt();
       await prompt.userChoice.catch(() => undefined);
+      (window as Window & { __installPrompt?: unknown }).__installPrompt = null;
       setPrompt(null);
     } else {
       setShowHint((v) => !v);
@@ -79,7 +76,7 @@ export function InstallAppButton() {
           role="status"
           className="absolute right-0 top-11 z-30 w-64 rounded-lg border border-zinc-200 bg-white p-3 text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
         >
-          No Safari, toque em <strong>Compartilhar</strong> e depois em{" "}
+          No Safari (ou no Chrome do iPhone), toque em <strong>Compartilhar</strong> e depois em{" "}
           <strong>Adicionar à Tela de Início</strong>.
         </div>
       )}
