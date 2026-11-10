@@ -527,7 +527,7 @@ export function PaymentsView({ toast }: { toast: (message: string, kind?: "succe
           key={form.mode === "edit" ? form.entry.id : "new"}
           entry={form.mode === "edit" ? form.entry : undefined}
           branches={branches}
-          showTitle={showTitle || sheet === "criticos"}
+          showTitle={showTitle}
           onClose={() => setForm(null)}
           onDelete={
             form.mode === "edit"
