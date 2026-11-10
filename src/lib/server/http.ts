@@ -18,6 +18,6 @@ export async function handle(op: () => Promise<Response>): Promise<Response> {
     if (e instanceof SyntaxError) return jsonError("JSON inválido.", 400);
     if (e instanceof StoreNotConfiguredError) return jsonError(e.message, 503);
     console.error(e);
-    return jsonError("Erro interno ao acessar as tarefas.", 500);
+    return jsonError("Erro interno ao acessar os dados.", 500);
   }
 }

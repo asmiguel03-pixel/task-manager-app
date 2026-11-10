@@ -48,61 +48,232 @@ export function excelDateSerial(iso: string): number | null {
   return Number.isNaN(ms) ? null : ms / 86_400_000 + 25_569;
 }
 
-// Estilos: 0 = padrão, 1 = cabeçalho em negrito, 2 = data dd/mm/aaaa.
-const STYLE_HEADER = 1;
-const STYLE_DATE = 2;
+// ---------- Estilos ----------
 
-function cellXml(value: XlsxCell, ref: string, style = 0): string {
+const FONTS = [
+  `<font><sz val="11"/><name val="Calibri"/></font>`,
+  `<font><b/><sz val="11"/><name val="Calibri"/></font>`,
+  `<font><b/><sz val="14"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>`,
+  `<font><i/><sz val="10"/><color rgb="FF52525B"/><name val="Calibri"/></font>`,
+  `<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>`,
+  `<font><b/><sz val="11"/><color rgb="FFB91C1C"/><name val="Calibri"/></font>`,
+];
+
+const solid = (rgb: string) =>
+  `<fill><patternFill patternType="solid"><fgColor rgb="FF${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
+const FILL_COLORS = ["E0E7FF", "1E293B", "334155", "DCFCE7", "DBEAFE", "FEF3C7", "FFEDD5", "F1F5F9", "FEE2E2"] as const;
+const fillId = (rgb: (typeof FILL_COLORS)[number]) => FILL_COLORS.indexOf(rgb) + 2;
+
+const NUM_FMT_DATE = 164;
+const NUM_FMT_BRL = 165;
+
+interface StyleDef {
+  font?: number;
+  fill?: (typeof FILL_COLORS)[number];
+  border?: boolean;
+  numFmt?: number;
+  h?: "left" | "center" | "right";
+  wrap?: boolean;
+}
+
+const STYLES = {
+  default: {},
+  header: { font: 1, fill: "E0E7FF" },
+  date: { numFmt: NUM_FMT_DATE },
+  title: { font: 2, fill: "1E293B" },
+  subtitle: { font: 3 },
+  th: { font: 4, fill: "334155", border: true, h: "center", wrap: true },
+  td: { border: true },
+  tdWrap: { border: true, wrap: true },
+  tdCenter: { border: true, h: "center" },
+  tdDate: { border: true, numFmt: NUM_FMT_DATE, h: "center" },
+  tdDateLate: { border: true, numFmt: NUM_FMT_DATE, h: "center", fill: "FEE2E2", font: 5 },
+  tdMoney: { border: true, numFmt: NUM_FMT_BRL },
+  totalLabel: { font: 1, fill: "F1F5F9", border: true, h: "right" },
+  totalMoney: { font: 1, fill: "F1F5F9", border: true, numFmt: NUM_FMT_BRL },
+  statusGreen: { border: true, wrap: true, fill: "DCFCE7" },
+  statusBlue: { border: true, wrap: true, fill: "DBEAFE" },
+  statusAmber: { border: true, wrap: true, fill: "FEF3C7" },
+  statusOrange: { border: true, wrap: true, fill: "FFEDD5" },
+  statusGray: { border: true, wrap: true, fill: "F1F5F9" },
+} satisfies Record<string, StyleDef>;
+
+export type StyleName = keyof typeof STYLES;
+const STYLE_NAMES = Object.keys(STYLES) as StyleName[];
+const styleIndex = (name: StyleName) => STYLE_NAMES.indexOf(name);
+
+function stylesXml(): string {
+  const xfs = STYLE_NAMES.map((name) => {
+    const d: StyleDef = STYLES[name];
+    const align =
+      d.h || d.wrap || d.border
+        ? `<alignment${d.h ? ` horizontal="${d.h}"` : ""} vertical="center"${d.wrap ? ` wrapText="1"` : ""}/>`
+        : "";
+    return (
+      `<xf numFmtId="${d.numFmt ?? 0}" fontId="${d.font ?? 0}" fillId="${d.fill ? fillId(d.fill) : 0}" borderId="${d.border ? 1 : 0}" xfId="0"` +
+      `${d.numFmt ? ` applyNumberFormat="1"` : ""}${d.font ? ` applyFont="1"` : ""}${d.fill ? ` applyFill="1"` : ""}` +
+      `${d.border ? ` applyBorder="1"` : ""}${align ? ` applyAlignment="1">${align}</xf>` : "/>"}`
+    );
+  });
+  const thin = `<left style="thin"><color rgb="FFD4D4D8"/></left><right style="thin"><color rgb="FFD4D4D8"/></right>` +
+    `<top style="thin"><color rgb="FFD4D4D8"/></top><bottom style="thin"><color rgb="FFD4D4D8"/></bottom><diagonal/>`;
+  return (
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<numFmts count="2"><numFmt numFmtId="${NUM_FMT_DATE}" formatCode="dd/mm/yyyy"/>` +
+    `<numFmt numFmtId="${NUM_FMT_BRL}" formatCode="&quot;R$&quot; #,##0.00;-&quot;R$&quot; #,##0.00"/></numFmts>` +
+    `<fonts count="${FONTS.length}">${FONTS.join("")}</fonts>` +
+    `<fills count="${FILL_COLORS.length + 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+    `${FILL_COLORS.map(solid).join("")}</fills>` +
+    `<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border>${thin}</border></borders>` +
+    `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+    `<cellXfs count="${xfs.length}">${xfs.join("")}</cellXfs>` +
+    `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+    `</styleSheet>`
+  );
+}
+
+// ---------- Planilhas ----------
+
+/** Fórmula do Excel (sem "="), com o valor já calculado para quem abre sem recalcular. */
+export interface XlsxFormula {
+  formula: string;
+  value?: number;
+}
+
+export interface StyledCell {
+  v: XlsxCell | XlsxFormula;
+  s?: StyleName;
+}
+
+export interface WorkbookRow {
+  cells: (StyledCell | XlsxCell)[];
+  /** Altura em pontos. */
+  height?: number;
+}
+
+export interface WorkbookSheet {
+  name: string;
+  rows: WorkbookRow[];
+  widths?: number[];
+  /** Intervalos mesclados, ex.: "A1:H1". */
+  merges?: string[];
+  /** Congela as linhas acima desta (1-based). */
+  freezeRows?: number;
+  /** Linha do cabeçalho com filtro (1-based). */
+  filterRow?: number;
+  /** Linhas repetidas no topo de cada página impressa (1-based, até esta). */
+  printTitleRows?: number;
+  landscape?: boolean;
+}
+
+const isStyled = (c: StyledCell | XlsxCell): c is StyledCell =>
+  typeof c === "object" && c !== null && "v" in c;
+
+function cellXml(cell: StyledCell | XlsxCell, ref: string): string {
+  const { v: value, s: styleName } = isStyled(cell) ? cell : { v: cell, s: undefined };
+  const style = styleName ? styleIndex(styleName) : 0;
   const s = style ? ` s="${style}"` : "";
-  if (value === null || value === undefined || value === "") return "";
+  if (value === null || value === undefined || value === "") return style ? `<c r="${ref}"${s}/>` : "";
   if (typeof value === "number") {
     return Number.isFinite(value) ? `<c r="${ref}"${s}><v>${value}</v></c>` : "";
   }
+  if (typeof value === "object" && "formula" in value) {
+    const v = value.value !== undefined && Number.isFinite(value.value) ? `<v>${value.value}</v>` : "";
+    return `<c r="${ref}"${s}><f>${escapeXml(value.formula)}</f>${v}</c>`;
+  }
   if (typeof value === "object") {
     const serial = excelDateSerial(value.date);
-    return serial === null ? "" : `<c r="${ref}" s="${STYLE_DATE}"><v>${serial}</v></c>`;
+    const ds = style ? s : ` s="${styleIndex("date")}"`;
+    return serial === null ? (style ? `<c r="${ref}"${s}/>` : "") : `<c r="${ref}"${ds}><v>${serial}</v></c>`;
   }
   // Limite de caracteres por célula no Excel.
   const text = value.length > 32_767 ? value.slice(0, 32_767) : value;
   return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
 }
 
-function sheetXml(sheet: XlsxSheet): string {
-  const cols = sheet.header.length;
-  const lastCol = columnName(Math.max(cols - 1, 0));
-  const lastRow = sheet.rows.length + 1;
+const sheetTitle = (name: string) =>
+  (name.replace(/[\\/?*[\]:]/g, " ").trim() || "Planilha").slice(0, 31);
+
+function worksheetXml(sheet: WorkbookSheet): string {
+  const cols = Math.max(1, ...sheet.rows.map((r) => r.cells.length));
+  const lastCol = columnName(cols - 1);
+  const lastRow = Math.max(1, sheet.rows.length);
   const widths = sheet.widths?.length
     ? `<cols>${sheet.widths
         .map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`)
         .join("")}</cols>`
     : "";
-  const row = (cells: XlsxCell[], r: number, style = 0) =>
-    `<row r="${r}">${cells.map((v, c) => cellXml(v, `${columnName(c)}${r}`, style)).join("")}</row>`;
+  const rows = sheet.rows
+    .map((row, i) => {
+      const r = i + 1;
+      const ht = row.height ? ` ht="${row.height}" customHeight="1"` : "";
+      return `<row r="${r}"${ht}>${row.cells.map((c, ci) => cellXml(c, `${columnName(ci)}${r}`)).join("")}</row>`;
+    })
+    .join("");
+  const freeze = sheet.freezeRows
+    ? `<pane ySplit="${sheet.freezeRows}" topLeftCell="A${sheet.freezeRows + 1}" activePane="bottomLeft" state="frozen"/>`
+    : "";
+  const filter = sheet.filterRow ? `<autoFilter ref="${filterRange(sheet)}"/>` : "";
+  const merges = sheet.merges?.length
+    ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((m) => `<mergeCell ref="${m}"/>`).join("")}</mergeCells>`
+    : "";
+  const sheetPr = sheet.landscape ? `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>` : "";
+  const page = sheet.landscape
+    ? `<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>` +
+      `<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>`
+    : "";
 
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    sheetPr +
     `<dimension ref="A1:${lastCol}${lastRow}"/>` +
-    `<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` +
+    `<sheetViews><sheetView workbookViewId="0">${freeze}</sheetView></sheetViews>` +
     widths +
-    `<sheetData>${row(sheet.header, 1, STYLE_HEADER)}${sheet.rows.map((r, i) => row(r, i + 2)).join("")}</sheetData>` +
-    `<autoFilter ref="A1:${lastCol}${lastRow}"/>` +
+    `<sheetData>${rows}</sheetData>` +
+    filter +
+    merges +
+    page +
     `</worksheet>`
   );
 }
 
-const sheetTitle = (name: string) =>
-  (name.replace(/[\\/?*[\]:]/g, " ").trim() || "Planilha").slice(0, 31);
+/** Intervalo do autofiltro: do cabeçalho até a última linha de dados contígua. */
+function filterRange(sheet: WorkbookSheet): string {
+  const header = sheet.filterRow ?? 1;
+  const cols = sheet.rows[header - 1]?.cells.length ?? 1;
+  let last = header;
+  while (last < sheet.rows.length && sheet.rows[last].cells.length > 0) last++;
+  return `A${header}:${columnName(cols - 1)}${last}`;
+}
 
-function packageFiles(sheet: XlsxSheet): Record<string, string> {
-  return {
+function packageFiles(sheets: WorkbookSheet[]): Record<string, string> {
+  const names = sheets.map((s) => sheetTitle(s.name));
+  const quoted = (i: number) => `'${escapeXml(names[i]).replace(/'/g, "''")}'`;
+  const abs = (range: string) => range.replace(/([A-Z]+)(\d+)/g, "$$$1$$$2");
+  const defined = sheets.flatMap((s, i) => [
+    ...(s.filterRow
+      ? [`<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">${quoted(i)}!${abs(filterRange(s))}</definedName>`]
+      : []),
+    ...(s.printTitleRows
+      ? [`<definedName name="_xlnm.Print_Titles" localSheetId="${i}">${quoted(i)}!$1:$${s.printTitleRows}</definedName>`]
+      : []),
+  ]);
+
+  const files: Record<string, string> = {
     "[Content_Types].xml":
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
       `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
       `<Default Extension="xml" ContentType="application/xml"/>` +
       `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
-      `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+      sheets
+        .map(
+          (_, i) =>
+            `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+        )
+        .join("") +
       `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
       `</Types>`,
     "_rels/.rels":
@@ -113,33 +284,25 @@ function packageFiles(sheet: XlsxSheet): Record<string, string> {
     "xl/workbook.xml":
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
-      `<sheets><sheet name="${escapeXml(sheetTitle(sheet.name))}" sheetId="1" r:id="rId1"/></sheets>` +
-      `<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'${escapeXml(sheetTitle(sheet.name)).replace(/'/g, "''")}'!$A$1:$${columnName(Math.max(sheet.header.length - 1, 0))}$${sheet.rows.length + 1}</definedName></definedNames>` +
+      `<sheets>${names.map((n, i) => `<sheet name="${escapeXml(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets>` +
+      (defined.length ? `<definedNames>${defined.join("")}</definedNames>` : "") +
+      `<calcPr calcId="191029" fullCalcOnLoad="1"/>` +
       `</workbook>`,
     "xl/_rels/workbook.xml.rels":
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
-      `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+      sheets
+        .map(
+          (_, i) =>
+            `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`,
+        )
+        .join("") +
+      `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
       `</Relationships>`,
-    "xl/styles.xml":
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-      `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-      `<numFmts count="1"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/></numFmts>` +
-      `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>` +
-      `<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
-      `<fill><patternFill patternType="solid"><fgColor rgb="FFE0E7FF"/><bgColor indexed="64"/></patternFill></fill></fills>` +
-      `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
-      `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
-      `<cellXfs count="3">` +
-      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
-      `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>` +
-      `<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
-      `</cellXfs>` +
-      `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
-      `</styleSheet>`,
-    "xl/worksheets/sheet1.xml": sheetXml(sheet),
+    "xl/styles.xml": stylesXml(),
   };
+  sheets.forEach((s, i) => (files[`xl/worksheets/sheet${i + 1}.xml`] = worksheetXml(s)));
+  return files;
 }
 
 // ---------- ZIP (método "stored", sem compressão) ----------
@@ -230,9 +393,28 @@ function zip(files: Record<string, string>, now = new Date()): Uint8Array {
   return out;
 }
 
-/** Gera os bytes de um arquivo .xlsx com uma aba. */
+/** Gera um .xlsx com várias abas, estilos, mesclagens e fórmulas. */
+export function buildWorkbook(sheets: WorkbookSheet[], now = new Date()): Uint8Array {
+  return zip(packageFiles(sheets), now);
+}
+
+/** Atalho: uma aba simples com cabeçalho destacado, filtro e primeira linha congelada. */
 export function buildXlsx(sheet: XlsxSheet, now = new Date()): Uint8Array {
-  return zip(packageFiles(sheet), now);
+  return buildWorkbook(
+    [
+      {
+        name: sheet.name,
+        widths: sheet.widths,
+        freezeRows: 1,
+        filterRow: 1,
+        rows: [
+          { cells: sheet.header.map((h) => ({ v: h, s: "header" as const })) },
+          ...sheet.rows.map((cells) => ({ cells })),
+        ],
+      },
+    ],
+    now,
+  );
 }
 
 export const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

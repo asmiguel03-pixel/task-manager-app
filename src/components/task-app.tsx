@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, ListChecks, LogOut, Menu, Plus, SearchX, X } from "lucide-react";
+import { Download, ListChecks, LogOut, Menu, Plus, SearchX, Wallet, X } from "lucide-react";
 import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
@@ -25,6 +25,7 @@ import { TaskList } from "./task-list";
 import { Toaster } from "./toaster";
 import { ThemeToggle } from "./theme-toggle";
 import { ToolsDrawer } from "./tools-drawer";
+import { PaymentsView } from "./payments-view";
 import { Toolbar, type View } from "./toolbar";
 import { btnGhost, btnPrimary, ConfirmDialog, IconButton } from "./ui";
 
@@ -41,6 +42,11 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
   const [form, setForm] = useState<FormState>(null);
   const [toDelete, setToDelete] = useState<Task | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [area, setArea] = useState<"tarefas" | "pagamentos">("tarefas");
+  const areaRef = useRef(area);
+  useEffect(() => {
+    areaRef.current = area;
+  }, [area]);
   const [toolsOpen, setToolsOpen] = useState(false);
   const closeTools = useCallback(() => setToolsOpen(false), []);
   const { toasts, toast, dismiss } = useToasts();
@@ -80,12 +86,25 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
         ? ["todo", "in_progress", "done", "archived"]
         : [filters.status];
 
+  // Área atual guardada no endereço (#pagamentos), para recarregar no mesmo lugar.
+  useEffect(() => {
+    const read = () => setArea(window.location.hash === "#pagamentos" ? "pagamentos" : "tarefas");
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
+  const goTo = (next: "tarefas" | "pagamentos") => {
+    setArea(next);
+    history.replaceState(null, "", next === "pagamentos" ? "#pagamentos" : window.location.pathname + window.location.search);
+  };
+
   // Atalhos: "N" nova tarefa, "/" foca a busca.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (el.closest("input, textarea, select, [contenteditable], dialog, [role='dialog']")) return;
+      if (areaRef.current !== "tarefas") return;
       if (e.key === "n" || e.key === "N") {
         e.preventDefault();
         setForm({ mode: "create", status: "todo" });
@@ -147,24 +166,27 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
           <span className="hidden size-9 items-center justify-center rounded-xl bg-indigo-600 text-white sm:flex">
             <ListChecks className="size-5" aria-hidden />
           </span>
-          <h1 className="text-xl font-semibold tracking-tight">Tarefas</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{area === "tarefas" ? "Tarefas" : "Pagamentos"}</h1>
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
           <InstallAppButton />
-          <IconButton
-            label="Exportar para Excel"
-            onClick={exportToExcel}
-            disabled={loading}
-            className="size-9"
-          >
-            <Download className="size-4.5" aria-hidden />
-          </IconButton>
+          {area === "tarefas" && (
+            <IconButton
+              label="Exportar para Excel"
+              onClick={exportToExcel}
+              disabled={loading}
+              className="size-9"
+            >
+              <Download className="size-4.5" aria-hidden />
+            </IconButton>
+          )}
           <ThemeToggle />
           {onLogout && (
             <IconButton label="Sair" onClick={onLogout} className="size-9">
               <LogOut className="size-4.5" aria-hidden />
             </IconButton>
           )}
+          {area === "tarefas" && (
           <button
             type="button"
             className={btnPrimary}
@@ -176,8 +198,45 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
             <span className="hidden sm:inline">Nova tarefa</span>
             <kbd className="hidden rounded bg-white/20 px-1.5 text-xs font-normal sm:inline">N</kbd>
           </button>
+          )}
         </div>
       </header>
+
+      <nav aria-label="Áreas do app" className="-mt-1">
+        <ul className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
+          {(
+            [
+              ["tarefas", "Tarefas", ListChecks],
+              ["pagamentos", "Controle de pagamentos", Wallet],
+            ] as const
+          ).map(([value, label, Icon]) => (
+            <li key={value}>
+              <button
+                type="button"
+                aria-current={area === value ? "page" : undefined}
+                onClick={() => goTo(value)}
+                className={
+                  "-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors " +
+                  (area === value
+                    ? "border-indigo-600 text-indigo-700 dark:border-indigo-400 dark:text-indigo-300"
+                    : "border-transparent text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100")
+                }
+              >
+                <Icon className="size-4" aria-hidden />
+                {label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <Toaster toasts={toasts} onDismiss={dismiss} />
+      <ToolsDrawer open={toolsOpen} onClose={closeTools} />
+
+      {area === "pagamentos" ? (
+        <PaymentsView toast={toast} />
+      ) : (
+      <>
 
       <DashboardHeader metrics={metrics} />
 
@@ -190,9 +249,6 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
         searchRef={searchRef}
         resultCount={visible.length}
       />
-
-      <Toaster toasts={toasts} onDismiss={dismiss} />
-      <ToolsDrawer open={toolsOpen} onClose={closeTools} />
 
       {tabs.length > 0 && (
         <nav aria-label="Separar por funcionário" className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
@@ -321,6 +377,8 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
             if (await deleteTask(toDelete.id)) toast("Tarefa excluída", "info");
           }}
         />
+      )}
+      </>
       )}
     </div>
   );

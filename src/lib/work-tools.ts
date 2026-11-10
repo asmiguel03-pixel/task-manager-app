@@ -526,3 +526,19 @@ export function formatBoletoLine(line: string): string {
   }
   return line;
 }
+
+// ---------- Dia útil ----------
+
+/** Verdadeiro se a data não é fim de semana nem feriado nacional. */
+export function isBusinessDay(iso: string, includeOptional = false): boolean {
+  const d = parseISO(iso);
+  if (!d || isWeekend(d)) return false;
+  return !holidaySet(d.getUTCFullYear(), d.getUTCFullYear(), includeOptional).has(iso);
+}
+
+/** A própria data, se for dia útil; senão, o próximo dia útil. */
+export function nextBusinessDay(iso: string): string {
+  const d = parseISO(iso);
+  if (!d) return iso;
+  return addBusinessDays(toISO(addDays(d, -1)), 1)?.date ?? iso;
+}
