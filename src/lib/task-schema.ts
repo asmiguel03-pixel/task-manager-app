@@ -9,6 +9,7 @@ export const PrioritySchema = z.enum(PRIORITIES);
 export const TITLE_MAX = 120;
 export const DESCRIPTION_MAX = 5000;
 export const CATEGORY_MAX = 40;
+export const ASSIGNEE_MAX = 40;
 
 export const SubtaskSchema = z.object({
   id: z.string().min(1),
@@ -37,6 +38,12 @@ export const TaskSchema = z.object({
     .string()
     .trim()
     .max(CATEGORY_MAX, `Máximo de ${CATEGORY_MAX} caracteres.`),
+  /** Funcionário responsável; vazio ou ausente = sem responsável. */
+  assignee: z
+    .string()
+    .trim()
+    .max(ASSIGNEE_MAX, `Máximo de ${ASSIGNEE_MAX} caracteres.`)
+    .optional(),
   /** Data de calendário, formato ISO `YYYY-MM-DD`. */
   dueDate: z.iso.date("Data inválida.").optional(),
   completedAt: z.iso.datetime().optional(),

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef } from "react";
 import { Calendar, Flag, TriangleAlert, X } from "lucide-react";
-import { formatDueDate, isOverdue, subtaskProgress } from "@/lib/task-domain";
+import { formatDueDate, initials, isOverdue, subtaskProgress } from "@/lib/task-domain";
 import { PRIORITY_LABELS, type Priority, type Task } from "@/lib/task-schema";
 
 export const cx = (...c: (string | false | null | undefined)[]) =>
@@ -69,6 +69,22 @@ export function CategoryBadge({ category }: { category: string }) {
   return (
     <span className="inline-flex max-w-40 items-center truncate rounded-md border border-zinc-200 px-1.5 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
       {category}
+    </span>
+  );
+}
+
+export function AssigneeBadge({ assignee }: { assignee?: string }) {
+  if (!assignee) return null;
+  return (
+    <span className="inline-flex max-w-40 items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-300">
+      <span
+        aria-hidden
+        className="flex size-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+      >
+        {initials(assignee)}
+      </span>
+      <span className="sr-only">Responsável: </span>
+      <span className="truncate">{assignee}</span>
     </span>
   );
 }

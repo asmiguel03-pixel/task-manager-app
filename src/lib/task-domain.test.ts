@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  assigneeTabs,
   buildTask,
   computeMetrics,
   DEFAULT_FILTERS,
   duplicateInput,
   filterTasks,
+  initials,
+  listAssignees,
   isOverdue,
   listCategories,
   patchTask,
@@ -130,6 +133,50 @@ describe("filtros", () => {
 
   it("lista categorias únicas em ordem", () => {
     expect(listCategories(tasks)).toEqual(["Dev", "Financeiro"]);
+  });
+});
+
+describe("funcionários", () => {
+  const tasks = [
+    buildTask(input({ title: "1", assignee: "Bruno Lima" })),
+    buildTask(input({ title: "2", assignee: "Ana" })),
+    buildTask(input({ title: "3", assignee: "Ana", priority: "high" })),
+    buildTask(input({ title: "4" })),
+    buildTask(input({ title: "5", assignee: "  " })),
+    buildTask(input({ title: "6", assignee: "Ana", status: "archived" })),
+  ];
+
+  it("lista nomes únicos, ignorando vazios", () => {
+    expect(listAssignees(tasks)).toEqual(["Ana", "Bruno Lima"]);
+    expect(initials("Bruno Lima")).toBe("BL");
+    expect(initials("ana")).toBe("A");
+  });
+
+  it("filtra por funcionário e por 'sem responsável'", () => {
+    const by = (assignee: string) =>
+      filterTasks(tasks, { ...DEFAULT_FILTERS, assignee }).map((t) => t.title);
+    expect(by("Ana")).toEqual(["2", "3"]);
+    expect(by("")).toEqual(["4", "5"]);
+    expect(by("all")).toHaveLength(5);
+  });
+
+  it("monta as abas com contagens que respeitam os outros filtros", () => {
+    expect(assigneeTabs(tasks, DEFAULT_FILTERS).map((t) => [t.label, t.count])).toEqual([
+      ["Todos", 5],
+      ["Ana", 2],
+      ["Bruno Lima", 1],
+      ["Sem responsável", 2],
+    ]);
+    const high = assigneeTabs(tasks, { ...DEFAULT_FILTERS, priority: "high", assignee: "Ana" });
+    expect(high.map((t) => t.count)).toEqual([1, 1, 0, 0]);
+    expect(assigneeTabs([tasks[3]], DEFAULT_FILTERS)).toEqual([]);
+  });
+
+  it("mantém o responsável ao alterar outros campos e ao duplicar", () => {
+    const moved = patchTask(tasks[0], { status: "done" });
+    expect(moved.assignee).toBe("Bruno Lima");
+    expect(duplicateInput(tasks[0]).assignee).toBe("Bruno Lima");
+    expect(patchTask(tasks[0], { assignee: "" }).assignee).toBe("");
   });
 });
 

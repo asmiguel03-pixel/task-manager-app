@@ -84,6 +84,7 @@ export function duplicateInput(task: Task): TaskInput {
     status: "todo",
     priority: task.priority,
     category: task.category,
+    assignee: task.assignee,
     dueDate: task.dueDate,
     subtasks: task.subtasks.map((s) => ({
       ...s,
@@ -107,13 +108,19 @@ export interface TaskFilters {
   search: string;
   priority: Priority | "all";
   category: string | "all";
+  /** Nome do funcionário, `UNASSIGNED` para tarefas sem responsável, ou "all". */
+  assignee: string | "all";
   status: StatusFilter;
 }
+
+/** Valor de filtro para tarefas sem responsável (nomes reais nunca são vazios). */
+export const UNASSIGNED = "";
 
 export const DEFAULT_FILTERS: TaskFilters = {
   search: "",
   priority: "all",
   category: "all",
+  assignee: "all",
   status: "active",
 };
 
@@ -130,6 +137,7 @@ export function filterTasks(tasks: Task[], f: TaskFilters): Task[] {
       return false;
     if (f.priority !== "all" && t.priority !== f.priority) return false;
     if (f.category !== "all" && t.category !== f.category) return false;
+    if (f.assignee !== "all" && (t.assignee ?? UNASSIGNED) !== f.assignee) return false;
     if (q && !normalize(`${t.title}\n${t.description ?? ""}`).includes(q))
       return false;
     return true;
@@ -140,6 +148,37 @@ export function listCategories(tasks: Task[]): string[] {
   return [...new Set(tasks.map((t) => t.category).filter(Boolean))].sort(
     (a, b) => a.localeCompare(b, "pt-BR"),
   );
+}
+
+export function listAssignees(tasks: Task[]): string[] {
+  return [...new Set(tasks.flatMap((t) => (t.assignee ? [t.assignee] : [])))].sort(
+    (a, b) => a.localeCompare(b, "pt-BR"),
+  );
+}
+
+/** Abas por funcionário, com a contagem de tarefas que passam nos demais filtros. */
+export function assigneeTabs(tasks: Task[], filters: TaskFilters) {
+  const pool = filterTasks(tasks, { ...filters, assignee: "all" });
+  const count = (value: string) =>
+    pool.filter((t) => (t.assignee ?? UNASSIGNED) === value).length;
+  const tabs = listAssignees(tasks).map((name) => ({
+    value: name,
+    label: name,
+    count: count(name),
+  }));
+  if (tabs.length === 0) return [];
+  return [
+    { value: "all", label: "Todos", count: pool.length },
+    ...tabs,
+    { value: UNASSIGNED, label: "Sem responsável", count: count(UNASSIGNED) },
+  ];
+}
+
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? (parts[parts.length - 1][0] ?? "") : "";
+  return (first + last).toUpperCase();
 }
 
 // ---------- Ordenação ----------

@@ -4,6 +4,7 @@ import { useId, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { newId } from "@/lib/task-domain";
 import {
+  ASSIGNEE_MAX,
   CATEGORY_MAX,
   DESCRIPTION_MAX,
   PRIORITIES,
@@ -21,20 +22,24 @@ import {
 import { Markdown } from "./markdown";
 import { btnGhost, btnPrimary, cx, IconButton, inputCls, Modal } from "./ui";
 
-type Errors = Partial<Record<"title" | "description" | "category" | "dueDate" | "subtasks", string>>;
+type Errors = Partial<Record<"title" | "description" | "category" | "assignee" | "dueDate" | "subtasks", string>>;
 
 const labelCls = "mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300";
 
 export function TaskFormDialog({
   task,
   defaultStatus = "todo",
+  defaultAssignee = "",
   categories,
+  assignees,
   onSubmit,
   onClose,
 }: {
   task?: Task;
   defaultStatus?: Status;
+  defaultAssignee?: string;
   categories: string[];
+  assignees: string[];
   onSubmit: (input: TaskInput) => Promise<unknown> | void;
   onClose: () => void;
 }) {
@@ -44,6 +49,7 @@ export function TaskFormDialog({
   const [status, setStatus] = useState<Status>(task?.status ?? defaultStatus);
   const [priority, setPriority] = useState<Priority>(task?.priority ?? "medium");
   const [category, setCategory] = useState(task?.category ?? "");
+  const [assignee, setAssignee] = useState(task?.assignee ?? defaultAssignee);
   const [dueDate, setDueDate] = useState(task?.dueDate ?? "");
   const [subtasks, setSubtasks] = useState<Subtask[]>(task?.subtasks ?? []);
   const [newSubtask, setNewSubtask] = useState("");
@@ -68,6 +74,7 @@ export function TaskFormDialog({
       status,
       priority,
       category,
+      assignee,
       dueDate: dueDate || undefined,
       // Uma subtarefa digitada mas não adicionada também é salva.
       subtasks: pending
@@ -177,6 +184,29 @@ export function TaskFormDialog({
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label htmlFor={`${uid}-assignee`} className={labelCls}>
+                Responsável
+              </label>
+              <input
+                id={`${uid}-assignee`}
+                name="assignee"
+                value={assignee}
+                onChange={(e) => setAssignee(e.target.value)}
+                list={`${uid}-assignees`}
+                maxLength={ASSIGNEE_MAX}
+                autoComplete="off"
+                placeholder="Nome do funcionário (opcional)"
+                className={inputCls}
+                {...aria("assignee")}
+              />
+              <datalist id={`${uid}-assignees`}>
+                {assignees.map((a) => (
+                  <option key={a} value={a} />
+                ))}
+              </datalist>
+              {err("assignee")}
+            </div>
             <div>
               <label htmlFor={`${uid}-status`} className={labelCls}>
                 Status

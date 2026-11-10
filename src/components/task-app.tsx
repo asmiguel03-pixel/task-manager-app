@@ -6,8 +6,10 @@ import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
   computeMetrics,
+  assigneeTabs,
   DEFAULT_FILTERS,
   filterTasks,
+  listAssignees,
   listCategories,
   type SortState,
   type TaskFilters,
@@ -61,6 +63,8 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
     [tasks, loading],
   );
   const categories = useMemo(() => listCategories(tasks), [tasks]);
+  const assignees = useMemo(() => listAssignees(tasks), [tasks]);
+  const tabs = useMemo(() => assigneeTabs(tasks, filters), [tasks, filters]);
   const visible = useMemo(() => filterTasks(tasks, filters), [tasks, filters]);
 
   const columns: Status[] =
@@ -143,6 +147,36 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
 
       <Toaster toasts={toasts} onDismiss={dismiss} />
 
+      {tabs.length > 0 && (
+        <nav aria-label="Separar por funcionário" className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <ul className="flex min-w-max gap-1 border-b border-zinc-200 dark:border-zinc-800">
+            {tabs.map((tab) => {
+              const active = filters.assignee === tab.value;
+              return (
+                <li key={tab.value || "__none"}>
+                  <button
+                    type="button"
+                    aria-current={active ? "true" : undefined}
+                    onClick={() => setFilters({ ...filters, assignee: tab.value })}
+                    className={
+                      "-mb-px inline-flex items-center gap-2 rounded-t-lg border-b-2 px-3 py-2 text-sm font-medium transition-colors " +
+                      (active
+                        ? "border-indigo-600 text-indigo-700 dark:border-indigo-400 dark:text-indigo-300"
+                        : "border-transparent text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100")
+                    }
+                  >
+                    {tab.label}
+                    <span className="rounded-full bg-zinc-200 px-1.5 text-xs tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                      {tab.count}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      )}
+
       {notice && (
         <p
           role="status"
@@ -211,7 +245,9 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
           key={form.mode === "edit" ? form.task.id : "new"}
           task={form.mode === "edit" ? form.task : undefined}
           defaultStatus={form.mode === "create" ? form.status : undefined}
+          defaultAssignee={filters.assignee === "all" ? "" : filters.assignee}
           categories={categories}
+          assignees={assignees}
           onClose={() => setForm(null)}
           onSubmit={async (input) => {
             if (form.mode === "edit") return updateWithToast(form.task.id, input);

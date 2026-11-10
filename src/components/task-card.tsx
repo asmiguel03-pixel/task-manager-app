@@ -13,7 +13,7 @@ import type { TaskActions } from "@/hooks/use-tasks";
 import { isOverdue } from "@/lib/task-domain";
 import { STATUS_LABELS, type Status, type Task } from "@/lib/task-schema";
 import { Markdown } from "./markdown";
-import { CategoryBadge, cx, DueDate, IconButton, PriorityBadge, ProgressBar } from "./ui";
+import { AssigneeBadge, CategoryBadge, cx, DueDate, IconButton, PriorityBadge, ProgressBar } from "./ui";
 
 const FLOW: Status[] = ["todo", "in_progress", "done"];
 
@@ -131,7 +131,10 @@ export function TaskCard({
       )}
 
       <footer className="mt-3 flex items-center justify-between gap-2">
-        <DueDate task={task} />
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <AssigneeBadge assignee={task.assignee} />
+          <DueDate task={task} />
+        </div>
         <div className="ml-auto flex items-center opacity-100 transition-opacity focus-within:opacity-100 group-hover:opacity-100 md:opacity-0">
           {idx >= 0 && (
             <>

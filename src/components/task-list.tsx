@@ -5,7 +5,7 @@ import type { TaskActions } from "@/hooks/use-tasks";
 import { sortTasks, type SortKey, type SortState } from "@/lib/task-domain";
 import { STATUSES, STATUS_LABELS, type Status, type Task } from "@/lib/task-schema";
 import { TaskActionButtons } from "./task-card";
-import { CategoryBadge, cx, DueDate, PriorityBadge, ProgressBar } from "./ui";
+import { AssigneeBadge, CategoryBadge, cx, DueDate, PriorityBadge, ProgressBar } from "./ui";
 
 const COLUMNS: { key: SortKey; label: string; className?: string }[] = [
   { key: "title", label: "Tarefa" },
@@ -83,6 +83,7 @@ export function TaskList({
                 </button>
                 <div className="mt-1 flex items-center gap-2">
                   <CategoryBadge category={task.category} />
+                  <AssigneeBadge assignee={task.assignee} />
                   <ProgressBar task={task} className="w-28" />
                 </div>
               </td>

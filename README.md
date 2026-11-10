@@ -17,6 +17,7 @@ npm test         # testes unitários (Vitest)
 
 - **Kanban** (A Fazer / Em Progresso / Concluído) com arrastar-e-soltar e botões ◀ ▶ para mover pelo teclado.
 - **Lista** em tabela com ordenação por tarefa, status, prioridade e prazo, e troca de status na própria linha.
+- **Responsável por tarefa** e **abas por funcionário** (Todos / cada pessoa / Sem responsável), com contagem.
 - **Busca instantânea** (título e descrição, ignora acentos) e filtros combinados por status, prioridade e categoria.
 - **CRUD completo** em modal com validação Zod, subtarefas com checkbox e barra de progresso, duplicar, arquivar/restaurar e excluir com confirmação.
 - **Resumo**: total, pendentes, concluídas e destaque de tarefas atrasadas.
