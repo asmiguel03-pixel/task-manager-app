@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/server/auth";
 import { handle, jsonError } from "@/lib/server/http";
 import { getTaskStore } from "@/lib/server/task-store";
 import { patchTask } from "@/lib/task-domain";
@@ -8,6 +9,7 @@ type Context = { params: Promise<{ id: string }> };
 
 export function PATCH(request: Request, { params }: Context) {
   return handle(async () => {
+    await requireAuth();
     const { id } = await params;
     const patch = TaskInputSchema.partial().parse(await request.json());
     const store = getTaskStore();
@@ -21,6 +23,7 @@ export function PATCH(request: Request, { params }: Context) {
 
 export function DELETE(_request: Request, { params }: Context) {
   return handle(async () => {
+    await requireAuth();
     const { id } = await params;
     await getTaskStore().delete(id);
     return new NextResponse(null, { status: 204 });

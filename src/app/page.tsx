@@ -1,5 +1,5 @@
-import { TaskApp } from "@/components/task-app";
+import { AuthGate } from "@/components/auth-gate";
 
 export default function Home() {
-  return <TaskApp />;
+  return <AuthGate />;
 }

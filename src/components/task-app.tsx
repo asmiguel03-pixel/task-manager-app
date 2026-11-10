@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ListChecks, Plus, SearchX, X } from "lucide-react";
+import { ListChecks, LogOut, Plus, SearchX, X } from "lucide-react";
 import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
@@ -20,13 +20,13 @@ import { TaskList } from "./task-list";
 import { Toaster } from "./toaster";
 import { ThemeToggle } from "./theme-toggle";
 import { Toolbar, type View } from "./toolbar";
-import { btnGhost, btnPrimary, ConfirmDialog } from "./ui";
+import { btnGhost, btnPrimary, ConfirmDialog, IconButton } from "./ui";
 
 type FormState = { mode: "create"; status: Status } | { mode: "edit"; task: Task } | null;
 
 const EMPTY_METRICS = { total: 0, pending: 0, done: 0, overdue: 0, completionRate: 0 };
 
-export function TaskApp() {
+export function TaskApp({ onLogout }: { onLogout?: () => void }) {
   const { tasks, loading, error, notice, dismissError, createTask, updateTask, deleteTask, duplicateTask, toggleSubtask } =
     useTasks();
   const [view, setView] = useState<View>("kanban");
@@ -111,6 +111,11 @@ export function TaskApp() {
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          {onLogout && (
+            <IconButton label="Sair" onClick={onLogout} className="size-9">
+              <LogOut className="size-4.5" aria-hidden />
+            </IconButton>
+          )}
           <button
             type="button"
             className={btnPrimary}

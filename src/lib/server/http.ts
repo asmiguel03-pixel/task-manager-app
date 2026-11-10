@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { UnauthorizedError } from "./auth";
 import { StoreNotConfiguredError } from "./task-store";
 
 export const jsonError = (message: string, status: number) =>
@@ -10,6 +11,7 @@ export async function handle(op: () => Promise<Response>): Promise<Response> {
   try {
     return await op();
   } catch (e) {
+    if (e instanceof UnauthorizedError) return jsonError("Autenticação necessária.", 401);
     if (e instanceof ZodError) {
       return jsonError(e.issues[0]?.message ?? "Dados inválidos.", 400);
     }

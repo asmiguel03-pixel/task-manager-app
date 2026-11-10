@@ -80,6 +80,7 @@ export class LocalStorageTaskRepository implements TaskRepository {
 }
 
 const POLL_MS = 4000;
+const UNAUTHORIZED_EVENT = "task-manager:unauthorized";
 
 class StoreUnavailableError extends Error {}
 
@@ -106,6 +107,11 @@ export class ApiTaskRepository implements TaskRepository {
       cache: "no-store",
       headers: init?.body ? { "Content-Type": "application/json" } : undefined,
     });
+    if (res.status === 401) {
+      // Sessão ausente ou expirada: o AuthGate volta para a tela de senha.
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      throw new Error("Sessão expirada. Entre novamente.");
+    }
     if (res.status === 503) throw new StoreUnavailableError();
     if (!res.ok) {
       const body: unknown = await res.json().catch(() => null);

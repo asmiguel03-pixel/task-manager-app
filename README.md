@@ -56,4 +56,10 @@ A UI só conhece a interface `TaskRepository` (`list`, `create`, `update`, `remo
 2. Conecte o banco ao projeto (as variáveis `KV_REST_API_*` são criadas automaticamente).
 3. Faça **Redeploy** em Deployments.
 
-> Não há login: qualquer pessoa com o link pode ver e alterar as tarefas.
+### Proteger com senha
+
+Defina a variável de ambiente `APP_PASSWORD` (na Vercel: **Settings → Environment Variables**, depois Redeploy).
+O site passa a pedir essa senha; quem entra fica conectado por 30 dias naquele navegador (cookie httpOnly assinado).
+Trocar o valor de `APP_PASSWORD` desconecta todo mundo. Sem a variável, o acesso é livre para quem tem o link.
+
+Localmente: `APP_PASSWORD=minha-senha npm run dev`.
