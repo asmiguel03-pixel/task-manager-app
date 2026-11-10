@@ -4,9 +4,11 @@ import {
   addBusinessDays,
   brazilHolidays,
   businessDaysBetween,
+  dueDateFromFactor,
   easterSunday,
   evaluateExpression,
   parseAccessKey,
+  parseBoleto,
 } from "./work-tools";
 
 describe("feriados e dias úteis", () => {
@@ -84,5 +86,48 @@ describe("calculadora", () => {
     expect(() => evaluateExpression("1/0")).toThrow();
     expect(() => evaluateExpression("2+")).toThrow();
     expect(() => evaluateExpression("alert(1)")).toThrow();
+  });
+});
+
+describe("boleto", () => {
+  // Exemplo público do Banco do Brasil.
+  const bb = "00190000090114971860168524522114675860000102656";
+
+  it("valida linha digitável de banco e lê valor e vencimento", () => {
+    expect(parseBoleto(bb, "2026-11-10")).toMatchObject({
+      ok: true,
+      kind: "bancario",
+      bank: "Banco do Brasil (001)",
+      amount: 1026.56,
+      dueDate: "2018-07-15",
+      barcode: "00196758600001026560000001149718606852452211",
+    });
+  });
+
+  it("converte código de barras de volta para a mesma linha digitável", () => {
+    const r = parseBoleto("00196758600001026560000001149718606852452211", "2026-11-10");
+    expect(r.ok && r.line).toBe(bb);
+  });
+
+  it("aponta o bloco com erro de digitação", () => {
+    const typo = bb.slice(0, 12) + ((Number(bb[12]) + 1) % 10) + bb.slice(13);
+    const r = parseBoleto(typo);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toContain("2º bloco");
+  });
+
+  it("usa o novo ciclo do fator de vencimento (a partir de 22/02/2025)", () => {
+    expect(dueDateFromFactor(1000, "2026-11-10")).toBe("2025-02-22");
+    expect(dueDateFromFactor(9999, "2025-01-01")).toBe("2025-02-21");
+    expect(dueDateFromFactor(0, "2026-11-10")).toBeNull();
+  });
+
+  it("valida conta de consumo/tributo (48 dígitos)", () => {
+    const r = parseBoleto("818400000095876512345679890123456785901234567894");
+    expect(r).toMatchObject({ ok: true, kind: "arrecadacao", segment: "Prefeituras", amount: 987.65 });
+  });
+
+  it("recusa tamanho errado", () => {
+    expect(parseBoleto("123").ok).toBe(false);
   });
 });

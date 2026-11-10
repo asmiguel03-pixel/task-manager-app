@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   FileCheck,
+  Landmark,
   Link,
   Plus,
   StickyNote,
@@ -19,10 +20,12 @@ import {
   addBusinessDays,
   businessDaysBetween,
   evaluateExpression,
+  formatBoletoLine,
   formatBR,
   formatNumberBR,
   groupKey,
   parseAccessKey,
+  parseBoleto,
   weekdayName,
 } from "@/lib/work-tools";
 import { btnGhost, cx, IconButton, inputCls } from "./ui";
@@ -342,6 +345,89 @@ function AccessKeyTool() {
   );
 }
 
+// ---------- Boleto ----------
+
+const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+function daysFromToday(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  const [ty, tm, td] = todayISO().split("-").map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(ty, tm - 1, td)) / 86_400_000);
+}
+
+function dueLabel(iso: string) {
+  const diff = daysFromToday(iso);
+  if (diff === 0) return { text: "vence hoje", tone: "text-amber-600 dark:text-amber-400" };
+  if (diff > 0) return { text: `vence em ${diff} ${diff === 1 ? "dia" : "dias"}`, tone: "text-emerald-600 dark:text-emerald-400" };
+  return { text: `vencido há ${-diff} ${diff === -1 ? "dia" : "dias"}`, tone: "text-red-600 dark:text-red-400" };
+}
+
+function BoletoTool() {
+  const [raw, setRaw] = useState("");
+  const result = raw.trim() ? parseBoleto(raw, todayISO()) : null;
+
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        rows={2}
+        inputMode="numeric"
+        placeholder="Cole a linha digitável ou o código de barras"
+        aria-label="Linha digitável do boleto"
+        aria-invalid={result ? !result.ok : undefined}
+        className={cx(inputCls, "h-auto resize-none py-2 font-mono text-xs")}
+      />
+      {result && !result.ok && <p className="text-xs text-red-600 dark:text-red-400">{result.error}</p>}
+      {result && result.ok && (
+        <div className="rounded-lg bg-emerald-50 p-3 text-sm dark:bg-emerald-950/40">
+          <p className="mb-2 flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-300">
+            <Check className="size-4" aria-hidden /> Código válido
+          </p>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            <dt className="text-zinc-500">Tipo</dt>
+            <dd className="font-medium">{result.kind === "bancario" ? "Boleto bancário" : "Conta / tributo (arrecadação)"}</dd>
+            <dt className="text-zinc-500">{result.kind === "bancario" ? "Banco" : "Segmento"}</dt>
+            <dd className="font-medium">{result.kind === "bancario" ? result.bank : result.segment}</dd>
+            <dt className="text-zinc-500">Valor</dt>
+            <dd className="font-medium">{result.amount !== null ? brl(result.amount) : "não informado no código"}</dd>
+            {result.kind === "bancario" && (
+              <>
+                <dt className="text-zinc-500">Vencimento</dt>
+                <dd className="font-medium">
+                  {result.dueDate ? (
+                    <>
+                      {formatBR(result.dueDate)}{" "}
+                      <span className={dueLabel(result.dueDate).tone}>({dueLabel(result.dueDate).text})</span>
+                    </>
+                  ) : (
+                    "sem vencimento no código"
+                  )}
+                </dd>
+              </>
+            )}
+          </dl>
+          <div className="mt-2 space-y-1">
+            <div className="flex items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">{formatBoletoLine(result.line)}</span>
+              <CopyButton text={result.line} label="Copiar linha digitável" />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">Barras: {result.barcode}</span>
+              <CopyButton text={result.barcode} label="Copiar código de barras" />
+            </div>
+          </div>
+        </div>
+      )}
+      <p className="text-xs text-zinc-500">
+        Confere os dígitos e lê banco, valor e vencimento gravados no código. Não consulta o banco: não confirma se o
+        boleto está registrado ou já foi pago — isso só no internet banking/DDA. Confira sempre o beneficiário na hora de
+        pagar.
+      </p>
+    </div>
+  );
+}
+
 // ---------- Links úteis ----------
 
 interface SavedLink {
@@ -498,6 +584,9 @@ export function ToolsDrawer({ open, onClose }: { open: boolean; onClose: () => v
           </Section>
           <Section title="Validar chave NF-e / CT-e" Icon={FileCheck}>
             <AccessKeyTool />
+          </Section>
+          <Section title="Verificar boleto" Icon={Landmark}>
+            <BoletoTool />
           </Section>
           <Section title="Links úteis" Icon={Link}>
             <LinksTool />

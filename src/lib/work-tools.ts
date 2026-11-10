@@ -315,3 +315,214 @@ export function evaluateExpression(input: string): number {
 
 export const formatNumberBR = (n: number) =>
   n.toLocaleString("pt-BR", { maximumFractionDigits: 10 });
+
+// ---------- Boleto (linha digitável / código de barras) ----------
+
+const BANKS: Record<string, string> = {
+  "001": "Banco do Brasil", "003": "Banco da Amazônia", "004": "Banco do Nordeste", "021": "Banestes",
+  "033": "Santander", "037": "Banpará", "041": "Banrisul", "047": "Banese", "070": "BRB",
+  "077": "Inter", "084": "Uniprime", "085": "Ailos", "104": "Caixa Econômica Federal",
+  "133": "Cresol", "136": "Unicred", "197": "Stone", "208": "BTG Pactual", "212": "Banco Original",
+  "237": "Bradesco", "260": "Nubank", "290": "PagBank", "323": "Mercado Pago", "336": "C6 Bank",
+  "341": "Itaú", "380": "PicPay", "389": "Banco Mercantil", "403": "Cora", "422": "Safra",
+  "633": "Rendimento", "634": "Banco Triângulo", "655": "Banco Votorantim", "707": "Daycoval",
+  "745": "Citibank", "746": "Modal", "748": "Sicredi", "756": "Sicoob",
+};
+
+const ARRECADACAO_SEGMENTS: Record<string, string> = {
+  "1": "Prefeituras",
+  "2": "Saneamento",
+  "3": "Energia elétrica e gás",
+  "4": "Telecomunicações",
+  "5": "Órgãos governamentais",
+  "6": "Carnês e assemelhados",
+  "7": "Multas de trânsito",
+  "9": "Uso exclusivo do banco",
+};
+
+/** Módulo 10 (pesos 2,1,2,1… da direita; soma os dígitos de cada produto). */
+export function mod10(digits: string): number {
+  let sum = 0;
+  let weight = 2;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    const p = Number(digits[i]) * weight;
+    sum += p > 9 ? p - 9 : p;
+    weight = weight === 2 ? 1 : 2;
+  }
+  return (10 - (sum % 10)) % 10;
+}
+
+function mod11Sum(digits: string): number {
+  let sum = 0;
+  let weight = 2;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    sum += Number(digits[i]) * weight;
+    weight = weight === 9 ? 2 : weight + 1;
+  }
+  return sum % 11;
+}
+
+/** DV geral do boleto bancário: resultados 0, 10 e 11 viram 1. */
+export function mod11Bank(digits: string): number {
+  const dv = 11 - mod11Sum(digits);
+  return dv === 0 || dv >= 10 ? 1 : dv;
+}
+
+/** DV módulo 11 dos boletos de arrecadação (contas, tributos). */
+export function mod11Collection(digits: string): number {
+  const rest = mod11Sum(digits);
+  return rest < 2 ? 0 : 11 - rest;
+}
+
+const isoFromUTC = (ms: number) => toISO(new Date(ms));
+
+/**
+ * Vencimento a partir do fator (dias desde 07/10/1997). Em 22/02/2025 o fator
+ * voltou a 1000; como o mesmo fator vale nos dois ciclos, usa a data mais
+ * próxima de `today`.
+ */
+export function dueDateFromFactor(factor: number, today: string): string | null {
+  if (factor === 0) return null;
+  const old = Date.UTC(1997, 9, 7) + factor * 86_400_000;
+  const renewed = Date.UTC(2025, 1, 22) + (factor - 1000) * 86_400_000;
+  const ref = parseISO(today)?.getTime() ?? Date.now();
+  const candidates = factor >= 1000 ? [old, renewed] : [old];
+  const best = candidates.reduce((a, b) => (Math.abs(b - ref) < Math.abs(a - ref) ? b : a));
+  return isoFromUTC(best);
+}
+
+export type BoletoResult =
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      kind: "bancario";
+      bank: string;
+      amount: number | null; // null = valor em aberto (definido na hora de pagar)
+      dueDate: string | null; // null = sem vencimento no código
+      barcode: string;
+      line: string;
+    }
+  | {
+      ok: true;
+      kind: "arrecadacao";
+      segment: string;
+      amount: number | null; // null quando o campo é "valor de referência"
+      barcode: string;
+      line: string;
+    };
+
+const fail = (error: string): BoletoResult => ({ ok: false, error });
+
+function bankBarcodeFromLine(l: string): string {
+  return l.slice(0, 4) + l[32] + l.slice(33, 47) + l.slice(4, 9) + l.slice(10, 20) + l.slice(21, 31);
+}
+
+function bankLineFromBarcode(b: string): string {
+  const f1 = b.slice(0, 4) + b.slice(19, 24);
+  const f2 = b.slice(24, 34);
+  const f3 = b.slice(34, 44);
+  return f1 + mod10(f1) + f2 + mod10(f2) + f3 + mod10(f3) + b[4] + b.slice(5, 19);
+}
+
+function parseBank(barcode: string, line: string, today: string): BoletoResult {
+  const expected = mod11Bank(barcode.slice(0, 4) + barcode.slice(5));
+  if (expected !== Number(barcode[4])) {
+    return fail(
+      `Dígito verificador geral inválido (deveria ser ${expected}). O código pode ter sido digitado errado ou adulterado.`,
+    );
+  }
+  if (barcode[3] !== "9") return fail("Moeda diferente de Real (código 9). Confira o boleto.");
+  const cents = Number(barcode.slice(9, 19));
+  const code = barcode.slice(0, 3);
+  return {
+    ok: true,
+    kind: "bancario",
+    bank: BANKS[code] ? `${BANKS[code]} (${code})` : `Banco ${code}`,
+    amount: cents ? cents / 100 : null,
+    dueDate: dueDateFromFactor(Number(barcode.slice(5, 9)), today),
+    barcode,
+    line,
+  };
+}
+
+function collectionCheck(effective: string) {
+  return effective === "6" || effective === "7" ? mod10 : effective === "8" || effective === "9" ? mod11Collection : null;
+}
+
+function parseCollection(barcode: string, line: string): BoletoResult {
+  const check = collectionCheck(barcode[2]);
+  if (!check) return fail("Terceiro dígito inválido para boleto de arrecadação (deve ser 6, 7, 8 ou 9).");
+  const expected = check(barcode.slice(0, 3) + barcode.slice(4));
+  if (expected !== Number(barcode[3])) {
+    return fail(
+      `Dígito verificador geral inválido (deveria ser ${expected}). O código pode ter sido digitado errado ou adulterado.`,
+    );
+  }
+  const value = Number(barcode.slice(4, 15));
+  return {
+    ok: true,
+    kind: "arrecadacao",
+    segment: ARRECADACAO_SEGMENTS[barcode[1]] ?? `Segmento ${barcode[1]}`,
+    amount: barcode[2] === "6" || barcode[2] === "8" ? (value ? value / 100 : null) : null,
+    barcode,
+    line,
+  };
+}
+
+/** Valida linha digitável (47/48 dígitos) ou código de barras (44 dígitos). */
+export function parseBoleto(raw: string, today = toISO(new Date(Date.now() - new Date().getTimezoneOffset() * 60_000))): BoletoResult {
+  const d = raw.replace(/\D/g, "");
+
+  if (d.length === 47) {
+    const fields: [string, number, string][] = [
+      [d.slice(0, 9), Number(d[9]), "1º"],
+      [d.slice(10, 20), Number(d[20]), "2º"],
+      [d.slice(21, 31), Number(d[31]), "3º"],
+    ];
+    for (const [data, dv, name] of fields) {
+      if (mod10(data) !== dv) {
+        return fail(`Erro no ${name} bloco da linha digitável: o dígito de controle não confere. Confira a digitação desse trecho.`);
+      }
+    }
+    return parseBank(bankBarcodeFromLine(d), d, today);
+  }
+
+  if (d.length === 48) {
+    if (d[0] !== "8") return fail("Linha com 48 dígitos deve começar com 8 (conta de consumo/tributo).");
+    const check = collectionCheck(d[2]);
+    if (!check) return fail("Terceiro dígito inválido para boleto de arrecadação (deve ser 6, 7, 8 ou 9).");
+    for (let i = 0; i < 4; i++) {
+      const block = d.slice(i * 12, i * 12 + 11);
+      if (check(block) !== Number(d[i * 12 + 11])) {
+        return fail(`Erro no ${i + 1}º bloco da linha digitável: o dígito de controle não confere. Confira a digitação desse trecho.`);
+      }
+    }
+    const barcode = [0, 1, 2, 3].map((i) => d.slice(i * 12, i * 12 + 11)).join("");
+    return parseCollection(barcode, d);
+  }
+
+  if (d.length === 44) {
+    if (d[0] === "8") {
+      const check = collectionCheck(d[2]);
+      const line = check
+        ? [0, 1, 2, 3].map((i) => d.slice(i * 11, i * 11 + 11)).map((b) => b + check(b)).join("")
+        : d;
+      return parseCollection(d, line);
+    }
+    return parseBank(d, bankLineFromBarcode(d), today);
+  }
+
+  return fail(
+    `O código tem ${d.length} dígito(s). A linha digitável tem 47 (boleto de banco) ou 48 (contas e tributos); o código de barras tem 44.`,
+  );
+}
+
+export function formatBoletoLine(line: string): string {
+  if (line.length === 47) {
+    return `${line.slice(0, 5)}.${line.slice(5, 10)} ${line.slice(10, 15)}.${line.slice(15, 21)} ${line.slice(21, 26)}.${line.slice(26, 32)} ${line[32]} ${line.slice(33)}`;
+  }
+  if (line.length === 48) {
+    return [0, 1, 2, 3].map((i) => `${line.slice(i * 12, i * 12 + 11)}-${line[i * 12 + 11]}`).join(" ");
+  }
+  return line;
+}
