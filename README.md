@@ -38,11 +38,22 @@ src/
   components/           # TaskApp, Kanban, Lista, formulário, cabeçalho, UI base
 ```
 
-### Trocar a persistência
+### Persistência
 
 A UI só conhece a interface `TaskRepository` (`list`, `create`, `update`, `remove`, `subscribe?`), toda assíncrona.
-Para usar uma API ou SQLite (Prisma/Drizzle), implemente a interface (por exemplo chamando Route Handlers) e troque
-a exportação `taskRepository` em `src/lib/task-repository.ts`. `buildTask` e `patchTask` (em `task-domain.ts`) podem
-ser reutilizados no servidor para manter `completedAt`/`updatedAt` consistentes.
 
-Os dados ficam no `localStorage` do navegador (chave `task-manager:tasks:v1`), validados com Zod na leitura.
+- **Padrão — compartilhado:** `ApiTaskRepository` usa a API `/api/tasks` e consulta o servidor a cada 4 s, então
+  todos que abrem o site veem e editam as mesmas tarefas. No servidor (`src/lib/server/task-store.ts`):
+  - **Produção:** Redis via REST (Upstash). Variáveis `KV_REST_API_URL` e `KV_REST_API_TOKEN`
+    (ou `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`).
+  - **Desenvolvimento:** sem essas variáveis, grava em `.data/tasks.json`.
+  - Na Vercel sem banco configurado, o app avisa e salva só no navegador.
+- **Somente local:** `NEXT_PUBLIC_TASK_STORAGE=local` usa apenas o `localStorage`.
+
+### Configurar o banco na Vercel
+
+1. No projeto, abra **Storage → Create Database → Upstash → Redis** (plano gratuito).
+2. Conecte o banco ao projeto (as variáveis `KV_REST_API_*` são criadas automaticamente).
+3. Faça **Redeploy** em Deployments.
+
+> Não há login: qualquer pessoa com o link pode ver e alterar as tarefas.

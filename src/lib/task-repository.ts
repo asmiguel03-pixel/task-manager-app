@@ -13,6 +13,8 @@ export interface TaskRepository {
   create(input: TaskInput): Promise<Task>;
   update(id: string, patch: Partial<TaskInput>): Promise<Task>;
   remove(id: string): Promise<void>;
+  /** Aviso persistente sobre o modo de armazenamento, se houver. Opcional. */
+  notice?(): string | null;
   /** Notifica mudanças externas (ex.: outra aba). Opcional. */
   subscribe?(listener: () => void): () => void;
 }
@@ -77,4 +79,94 @@ export class LocalStorageTaskRepository implements TaskRepository {
   }
 }
 
-export const taskRepository: TaskRepository = new LocalStorageTaskRepository();
+const POLL_MS = 4000;
+
+class StoreUnavailableError extends Error {}
+
+/**
+ * Persistência compartilhada via API (`/api/tasks`): todos os visitantes veem
+ * os mesmos dados. `subscribe` consulta o servidor periodicamente e ao voltar
+ * para a aba, para refletir as alterações feitas por outras pessoas.
+ */
+export class ApiTaskRepository implements TaskRepository {
+  /** Preenchido quando o servidor não tem banco configurado (HTTP 503). */
+  private fallback: LocalStorageTaskRepository | null = null;
+
+  constructor(private readonly baseUrl = "/api/tasks") {}
+
+  notice() {
+    return this.fallback
+      ? "Banco de dados não configurado no servidor: as tarefas estão sendo salvas apenas neste navegador e não são compartilhadas."
+      : null;
+  }
+
+  private async request(path: string, init?: RequestInit): Promise<unknown> {
+    const res = await fetch(this.baseUrl + path, {
+      ...init,
+      cache: "no-store",
+      headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+    });
+    if (res.status === 503) throw new StoreUnavailableError();
+    if (!res.ok) {
+      const body: unknown = await res.json().catch(() => null);
+      const parsed = z.object({ error: z.string() }).safeParse(body);
+      throw new Error(parsed.success ? parsed.data.error : `Erro ${res.status}`);
+    }
+    return res.status === 204 ? undefined : res.json();
+  }
+
+  async list() {
+    if (this.fallback) return this.fallback.list();
+    try {
+      return z.array(TaskSchema).parse(await this.request(""));
+    } catch (e) {
+      if (!(e instanceof StoreUnavailableError)) throw e;
+      // Sem banco no servidor: o app continua utilizável, só que local.
+      this.fallback = new LocalStorageTaskRepository();
+      return this.fallback.list();
+    }
+  }
+
+  async create(input: TaskInput) {
+    if (this.fallback) return this.fallback.create(input);
+    return TaskSchema.parse(
+      await this.request("", { method: "POST", body: JSON.stringify(input) }),
+    );
+  }
+
+  async update(id: string, patch: Partial<TaskInput>) {
+    if (this.fallback) return this.fallback.update(id, patch);
+    return TaskSchema.parse(
+      await this.request(`/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }),
+    );
+  }
+
+  async remove(id: string) {
+    if (this.fallback) return this.fallback.remove(id);
+    await this.request(`/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  subscribe(listener: () => void) {
+    const tick = () => document.visibilityState === "visible" && listener();
+    const timer = window.setInterval(tick, POLL_MS);
+    document.addEventListener("visibilitychange", tick);
+    window.addEventListener("focus", tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("focus", tick);
+    };
+  }
+}
+
+/**
+ * Padrão: dados compartilhados no servidor. Defina
+ * NEXT_PUBLIC_TASK_STORAGE=local para guardar apenas no navegador.
+ */
+export const taskRepository: TaskRepository =
+  process.env.NEXT_PUBLIC_TASK_STORAGE === "local"
+    ? new LocalStorageTaskRepository()
+    : new ApiTaskRepository();

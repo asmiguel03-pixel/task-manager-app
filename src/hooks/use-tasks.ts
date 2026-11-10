@@ -5,18 +5,31 @@ import { duplicateInput } from "@/lib/task-domain";
 import { taskRepository, type TaskRepository } from "@/lib/task-repository";
 import type { Task, TaskInput } from "@/lib/task-schema";
 
+const LOAD_ERROR = "Não foi possível carregar as tarefas.";
+
 export function useTasks(repo: TaskRepository = taskRepository) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = () =>
       repo
         .list()
-        .then((list) => alive && setTasks(list))
-        .catch(() => alive && setError("Não foi possível carregar as tarefas."))
+        .then((list) => {
+          if (!alive) return;
+          // Evita re-renderizar quando a consulta periódica não trouxe mudanças.
+          setTasks((prev) => (JSON.stringify(prev) === JSON.stringify(list) ? prev : list));
+          setError((prev) => (prev?.startsWith(LOAD_ERROR) ? null : prev));
+          setNotice(repo.notice?.() ?? null);
+        })
+        .catch((e: unknown) => {
+          if (!alive) return;
+          const detail = e instanceof Error && e.message ? ` ${e.message}` : "";
+          setError(LOAD_ERROR + detail);
+        })
         .finally(() => alive && setLoading(false));
     load();
     const unsubscribe = repo.subscribe?.(load);
@@ -86,6 +99,7 @@ export function useTasks(repo: TaskRepository = taskRepository) {
     tasks,
     loading,
     error,
+    notice,
     dismissError: () => setError(null),
     createTask,
     updateTask,

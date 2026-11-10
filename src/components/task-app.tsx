@@ -27,7 +27,7 @@ type FormState = { mode: "create"; status: Status } | { mode: "edit"; task: Task
 const EMPTY_METRICS = { total: 0, pending: 0, done: 0, overdue: 0, completionRate: 0 };
 
 export function TaskApp() {
-  const { tasks, loading, error, dismissError, createTask, updateTask, deleteTask, duplicateTask, toggleSubtask } =
+  const { tasks, loading, error, notice, dismissError, createTask, updateTask, deleteTask, duplicateTask, toggleSubtask } =
     useTasks();
   const [view, setView] = useState<View>("kanban");
   const [filters, setFilters] = useState<TaskFilters>(DEFAULT_FILTERS);
@@ -137,6 +137,15 @@ export function TaskApp() {
       />
 
       <Toaster toasts={toasts} onDismiss={dismiss} />
+
+      {notice && (
+        <p
+          role="status"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          {notice}
+        </p>
+      )}
 
       {error && (
         <div
