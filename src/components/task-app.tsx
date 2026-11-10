@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, ListChecks, LogOut, Plus, SearchX, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download, ListChecks, LogOut, Menu, Plus, SearchX, X } from "lucide-react";
 import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
@@ -24,6 +24,7 @@ import { TaskFormDialog } from "./task-form-dialog";
 import { TaskList } from "./task-list";
 import { Toaster } from "./toaster";
 import { ThemeToggle } from "./theme-toggle";
+import { ToolsDrawer } from "./tools-drawer";
 import { Toolbar, type View } from "./toolbar";
 import { btnGhost, btnPrimary, ConfirmDialog, IconButton } from "./ui";
 
@@ -40,6 +41,8 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
   const [form, setForm] = useState<FormState>(null);
   const [toDelete, setToDelete] = useState<Task | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const closeTools = useCallback(() => setToolsOpen(false), []);
   const { toasts, toast, dismiss } = useToasts();
 
   // Toda alteração passa por aqui para gerar o feedback visual adequado.
@@ -82,7 +85,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (el.closest("input, textarea, select, [contenteditable], dialog")) return;
+      if (el.closest("input, textarea, select, [contenteditable], dialog, [role='dialog']")) return;
       if (e.key === "n" || e.key === "N") {
         e.preventDefault();
         setForm({ mode: "create", status: "todo" });
@@ -132,13 +135,21 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:py-8">
       <header className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="flex size-9 items-center justify-center rounded-xl bg-indigo-600 text-white">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
+          <IconButton
+            label="Abrir ferramentas"
+            onClick={() => setToolsOpen(true)}
+            aria-expanded={toolsOpen}
+            className="size-9"
+          >
+            <Menu className="size-5" aria-hidden />
+          </IconButton>
+          <span className="hidden size-9 items-center justify-center rounded-xl bg-indigo-600 text-white sm:flex">
             <ListChecks className="size-5" aria-hidden />
           </span>
           <h1 className="text-xl font-semibold tracking-tight">Tarefas</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
           <InstallAppButton />
           <IconButton
             label="Exportar para Excel"
@@ -158,10 +169,11 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
             type="button"
             className={btnPrimary}
             aria-keyshortcuts="N"
+            aria-label="Nova tarefa"
             onClick={() => setForm({ mode: "create", status: "todo" })}
           >
             <Plus className="size-4" aria-hidden />
-            Nova tarefa
+            <span className="hidden sm:inline">Nova tarefa</span>
             <kbd className="hidden rounded bg-white/20 px-1.5 text-xs font-normal sm:inline">N</kbd>
           </button>
         </div>
@@ -180,6 +192,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
       />
 
       <Toaster toasts={toasts} onDismiss={dismiss} />
+      <ToolsDrawer open={toolsOpen} onClose={closeTools} />
 
       {tabs.length > 0 && (
         <nav aria-label="Separar por funcionário" className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
