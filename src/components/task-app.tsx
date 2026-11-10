@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ListChecks, LogOut, Plus, SearchX, X } from "lucide-react";
+import { Download, ListChecks, LogOut, Plus, SearchX, X } from "lucide-react";
 import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
@@ -14,8 +14,11 @@ import {
   type SortState,
   type TaskFilters,
 } from "@/lib/task-domain";
+import { exportFileName, exportTasksXlsx } from "@/lib/task-export";
 import { STATUS_LABELS, type Status, type Task, type TaskInput } from "@/lib/task-schema";
+import { XLSX_MIME } from "@/lib/xlsx";
 import { DashboardHeader } from "./dashboard-header";
+import { InstallAppButton } from "./install-app-button";
 import { KanbanBoard } from "./kanban-board";
 import { TaskFormDialog } from "./task-form-dialog";
 import { TaskList } from "./task-list";
@@ -92,6 +95,28 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Exporta exatamente o que está na tela (aba, busca e filtros aplicados).
+  const exportToExcel = () => {
+    if (visible.length === 0) {
+      toast("Nenhuma tarefa para exportar com os filtros atuais", "info");
+      return;
+    }
+    const tab = tabs.find((t) => t.value === filters.assignee && filters.assignee !== "all");
+    const blob = new Blob([exportTasksXlsx(visible) as BlobPart], { type: XLSX_MIME });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportFileName(tab?.label);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(
+      `${visible.length} ${visible.length === 1 ? "tarefa exportada" : "tarefas exportadas"} para Excel`,
+      "success",
+    );
+  };
+
   const actions: TaskActions = {
     updateTask: updateWithToast,
     duplicateTask: async (task) => {
@@ -114,6 +139,15 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
           <h1 className="text-xl font-semibold tracking-tight">Tarefas</h1>
         </div>
         <div className="flex items-center gap-2">
+          <InstallAppButton />
+          <IconButton
+            label="Exportar para Excel"
+            onClick={exportToExcel}
+            disabled={loading}
+            className="size-9"
+          >
+            <Download className="size-4.5" aria-hidden />
+          </IconButton>
           <ThemeToggle />
           {onLogout && (
             <IconButton label="Sair" onClick={onLogout} className="size-9">
