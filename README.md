@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tarefas — Gerenciador de Tarefas
 
-## Getting Started
+Aplicação de gerenciamento de tarefas com Next.js (App Router), TypeScript, Tailwind CSS, Lucide Icons e Zod.
 
-First, run the development server:
+## Executar
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev      # desenvolvimento em http://localhost:3000
+npm run build && npm start   # produção
+npm run lint
+npm run typecheck
+npm test         # testes unitários (Vitest)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Funcionalidades
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Kanban** (A Fazer / Em Progresso / Concluído) com arrastar-e-soltar e botões ◀ ▶ para mover pelo teclado.
+- **Lista** em tabela com ordenação por tarefa, status, prioridade e prazo, e troca de status na própria linha.
+- **Busca instantânea** (título e descrição, ignora acentos) e filtros combinados por status, prioridade e categoria.
+- **CRUD completo** em modal com validação Zod, subtarefas com checkbox e barra de progresso, duplicar, arquivar/restaurar e excluir com confirmação.
+- **Resumo**: total, pendentes, concluídas e destaque de tarefas atrasadas.
+- **Descrição em Markdown** (negrito, listas, links, código) com pré-visualização no formulário.
+- **Toasts** de feedback ao criar, excluir, duplicar e mudar o status de tarefas.
+- **Tema claro/escuro** (respeita o sistema e lembra a escolha) e atalhos: `N` nova tarefa, `/` busca, `Esc` fecha modais.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Arquitetura
 
-## Learn More
+```
+src/
+  lib/
+    task-schema.ts      # schemas Zod + tipos inferidos (fonte única da verdade)
+    task-domain.ts      # regras puras: criar/alterar, filtros, ordenação, métricas
+    task-repository.ts  # interface TaskRepository + implementação LocalStorage
+    mock-data.ts        # dados de exemplo da primeira execução
+  hooks/                # use-tasks (estado sobre o repositório), use-toasts
+  types/task.ts         # tipos compartilhados, inferidos dos schemas
+  components/           # TaskApp, Kanban, Lista, formulário, cabeçalho, UI base
+```
 
-To learn more about Next.js, take a look at the following resources:
+### Trocar a persistência
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+A UI só conhece a interface `TaskRepository` (`list`, `create`, `update`, `remove`, `subscribe?`), toda assíncrona.
+Para usar uma API ou SQLite (Prisma/Drizzle), implemente a interface (por exemplo chamando Route Handlers) e troque
+a exportação `taskRepository` em `src/lib/task-repository.ts`. `buildTask` e `patchTask` (em `task-domain.ts`) podem
+ser reutilizados no servidor para manter `completedAt`/`updatedAt` consistentes.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Os dados ficam no `localStorage` do navegador (chave `task-manager:tasks:v1`), validados com Zod na leitura.
