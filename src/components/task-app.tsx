@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Landmark, ListChecks, LogOut, Menu, Plus, SearchX, X } from "lucide-react";
+import { Download, FileCheck, Landmark, ListChecks, LogOut, Menu, Plus, SearchX, X } from "lucide-react";
 import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
@@ -26,12 +26,20 @@ import { Toaster } from "./toaster";
 import { ThemeToggle } from "./theme-toggle";
 import { ToolsDrawer } from "./tools-drawer";
 import { PaymentsView } from "./payments-view";
+import { ReconcileView } from "./reconcile-view";
 import { Toolbar, type View } from "./toolbar";
 import { btnGhost, btnPrimary, ConfirmDialog, IconButton } from "./ui";
 
 type FormState = { mode: "create"; status: Status } | { mode: "edit"; task: Task } | null;
 
 const EMPTY_METRICS = { total: 0, pending: 0, done: 0, overdue: 0, completionRate: 0 };
+
+type Area = "tarefas" | "pagamentos" | "conciliacao";
+const AREA_TITLES: Record<Area, string> = {
+  tarefas: "Tarefas",
+  pagamentos: "Pagamentos",
+  conciliacao: "Conciliação",
+};
 
 export function TaskApp({ onLogout }: { onLogout?: () => void }) {
   const { tasks, loading, error, notice, dismissError, createTask, updateTask, deleteTask, duplicateTask, toggleSubtask } =
@@ -42,7 +50,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
   const [form, setForm] = useState<FormState>(null);
   const [toDelete, setToDelete] = useState<Task | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const [area, setArea] = useState<"tarefas" | "pagamentos">("tarefas");
+  const [area, setArea] = useState<Area>("tarefas");
   const areaRef = useRef(area);
   useEffect(() => {
     areaRef.current = area;
@@ -88,14 +96,17 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
 
   // Área atual guardada no endereço (#pagamentos), para recarregar no mesmo lugar.
   useEffect(() => {
-    const read = () => setArea(window.location.hash === "#pagamentos" ? "pagamentos" : "tarefas");
+    const read = () => {
+      const hash = window.location.hash.slice(1);
+      setArea(hash === "pagamentos" || hash === "conciliacao" ? hash : "tarefas");
+    };
     read();
     window.addEventListener("hashchange", read);
     return () => window.removeEventListener("hashchange", read);
   }, []);
-  const goTo = (next: "tarefas" | "pagamentos") => {
+  const goTo = (next: Area) => {
     setArea(next);
-    history.replaceState(null, "", next === "pagamentos" ? "#pagamentos" : window.location.pathname + window.location.search);
+    history.replaceState(null, "", next === "tarefas" ? window.location.pathname + window.location.search : `#${next}`);
   };
 
   // Atalhos: "N" nova tarefa, "/" foca a busca.
@@ -166,7 +177,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
           <span className="hidden size-9 items-center justify-center rounded-xl bg-indigo-600 text-white sm:flex">
             <ListChecks className="size-5" aria-hidden />
           </span>
-          <h1 className="text-xl font-semibold tracking-tight">{area === "tarefas" ? "Tarefas" : "Pagamentos"}</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{AREA_TITLES[area]}</h1>
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
           <InstallAppButton />
@@ -203,11 +214,12 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
       </header>
 
       <nav aria-label="Áreas do app" className="-mt-1">
-        <ul className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
+        <ul className="flex gap-1 overflow-x-auto whitespace-nowrap border-b border-zinc-200 dark:border-zinc-800">
           {(
             [
               ["tarefas", "Tarefas", ListChecks],
               ["pagamentos", "Controle de pagamentos", Landmark],
+              ["conciliacao", "Conciliar relatório", FileCheck],
             ] as const
           ).map(([value, label, Icon]) => (
             <li key={value}>
@@ -235,6 +247,8 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
 
       {area === "pagamentos" ? (
         <PaymentsView toast={toast} />
+      ) : area === "conciliacao" ? (
+        <ReconcileView toast={toast} />
       ) : (
       <>
 

@@ -96,6 +96,7 @@ const STYLES = {
   statusAmber: { border: true, wrap: true, fill: "FEF3C7" },
   statusOrange: { border: true, wrap: true, fill: "FFEDD5" },
   statusGray: { border: true, wrap: true, fill: "F1F5F9" },
+  statusRed: { border: true, wrap: true, fill: "FEE2E2", font: 5 },
 } satisfies Record<string, StyleDef>;
 
 export type StyleName = keyof typeof STYLES;
