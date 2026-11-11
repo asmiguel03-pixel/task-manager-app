@@ -238,3 +238,38 @@ describe("métricas", () => {
     expect(subtaskProgress(buildTask(input())).percent).toBe(0);
   });
 });
+
+describe("filtro por prazo", () => {
+  const now = new Date("2026-11-01T12:00:00");
+  const mk = (title: string, dueDate?: string, status: "todo" | "done" = "todo") =>
+    buildTask(input({ title, dueDate, status }), now);
+  const list = [
+    mk("ontem", "2026-11-10"),
+    mk("ontem feita", "2026-11-10", "done"),
+    mk("hoje", "2026-11-11"),
+    mk("domingo", "2026-11-15"),
+    mk("segunda que vem", "2026-11-16"),
+    mk("fim do mês", "2026-11-30"),
+    mk("dezembro", "2026-12-01"),
+    mk("sem prazo"),
+  ];
+  const titles = (f: Partial<typeof DEFAULT_FILTERS>) =>
+    filterTasks(list, { ...DEFAULT_FILTERS, ...f }, "2026-11-11").map((t) => t.title);
+
+  it("atalhos de prazo", () => {
+    expect(titles({ due: "overdue" })).toEqual(["ontem"]);
+    expect(titles({ due: "today" })).toEqual(["hoje"]);
+    expect(titles({ due: "week" })).toEqual(["ontem", "ontem feita", "hoje", "domingo"]);
+    expect(titles({ due: "next7" })).toEqual(["hoje", "domingo", "segunda que vem"]);
+    expect(titles({ due: "month" })).toEqual([
+      "ontem", "ontem feita", "hoje", "domingo", "segunda que vem", "fim do mês",
+    ]);
+    expect(titles({ due: "none" })).toEqual(["sem prazo"]);
+  });
+
+  it("período personalizado, com ou sem limites", () => {
+    expect(titles({ due: "custom", dueFrom: "2026-11-15", dueTo: "2026-11-16" })).toEqual(["domingo", "segunda que vem"]);
+    expect(titles({ due: "custom", dueFrom: "2026-11-30" })).toEqual(["fim do mês", "dezembro"]);
+    expect(titles({ due: "custom" })).toHaveLength(7);
+  });
+});

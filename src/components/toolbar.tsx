@@ -1,7 +1,14 @@
 "use client";
 
 import { Kanban, List, Search, X } from "lucide-react";
-import { DEFAULT_FILTERS, type StatusFilter, type TaskFilters } from "@/lib/task-domain";
+import {
+  DEFAULT_FILTERS,
+  DUE_FILTERS,
+  DUE_FILTER_LABELS,
+  type DueFilter,
+  type StatusFilter,
+  type TaskFilters,
+} from "@/lib/task-domain";
 import {
   PRIORITIES,
   PRIORITY_LABELS,
@@ -91,6 +98,45 @@ export function Toolbar({
             </option>
           ))}
         </select>
+        <select
+          aria-label="Filtrar por prazo"
+          value={filters.due}
+          onChange={(e) => set({ due: e.target.value as DueFilter })}
+          className={selectCls}
+        >
+          {DUE_FILTERS.map((d) => (
+            <option key={d} value={d}>
+              {DUE_FILTER_LABELS[d]}
+            </option>
+          ))}
+        </select>
+        {filters.due === "custom" && (
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <label className="sr-only" htmlFor="due-from">
+              Prazo a partir de
+            </label>
+            <input
+              id="due-from"
+              type="date"
+              value={filters.dueFrom}
+              max={filters.dueTo || undefined}
+              onChange={(e) => set({ dueFrom: e.target.value })}
+              className={cx(selectCls, "sm:w-40")}
+            />
+            <span className="text-sm text-zinc-500">até</span>
+            <label className="sr-only" htmlFor="due-to">
+              Prazo até
+            </label>
+            <input
+              id="due-to"
+              type="date"
+              value={filters.dueTo}
+              min={filters.dueFrom || undefined}
+              onChange={(e) => set({ dueTo: e.target.value })}
+              className={cx(selectCls, "sm:w-40")}
+            />
+          </div>
+        )}
         {dirty && (
           <button
             type="button"

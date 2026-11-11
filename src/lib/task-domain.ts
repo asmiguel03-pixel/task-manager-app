@@ -111,6 +111,55 @@ export interface TaskFilters {
   /** Nome do funcionário, `UNASSIGNED` para tarefas sem responsável, ou "all". */
   assignee: string | "all";
   status: StatusFilter;
+  /** Filtro pelo prazo da tarefa. */
+  due: DueFilter;
+  /** Início/fim do período quando `due` é "custom" (`YYYY-MM-DD`, vazio = sem limite). */
+  dueFrom: string;
+  dueTo: string;
+}
+
+export const DUE_FILTERS = ["all", "overdue", "today", "week", "next7", "month", "none", "custom"] as const;
+export type DueFilter = (typeof DUE_FILTERS)[number];
+
+export const DUE_FILTER_LABELS: Record<DueFilter, string> = {
+  all: "Prazo: todos",
+  overdue: "Atrasadas",
+  today: "Vence hoje",
+  week: "Esta semana",
+  next7: "Próximos 7 dias",
+  month: "Este mês",
+  none: "Sem prazo",
+  custom: "Período…",
+};
+
+const shiftISO = (iso: string, days: number) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + days));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
+};
+
+/** Intervalo de datas (inclusivo) de cada atalho; semana = segunda a domingo. */
+export function dueRange(f: Pick<TaskFilters, "due" | "dueFrom" | "dueTo">, today: string): [string, string] | null {
+  const [y, m, d] = today.split("-").map(Number);
+  switch (f.due) {
+    case "today":
+      return [today, today];
+    case "week": {
+      const weekday = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; // 0 = segunda
+      const monday = shiftISO(today, -weekday);
+      return [monday, shiftISO(monday, 6)];
+    }
+    case "next7":
+      return [today, shiftISO(today, 7)];
+    case "month": {
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      return [`${today.slice(0, 7)}-01`, `${today.slice(0, 7)}-${String(lastDay).padStart(2, "0")}`];
+    }
+    case "custom":
+      return [f.dueFrom || "0000-01-01", f.dueTo || "9999-12-31"];
+    default:
+      return null;
+  }
 }
 
 /** Valor de filtro para tarefas sem responsável (nomes reais nunca são vazios). */
@@ -122,6 +171,9 @@ export const DEFAULT_FILTERS: TaskFilters = {
   category: "all",
   assignee: "all",
   status: "active",
+  due: "all",
+  dueFrom: "",
+  dueTo: "",
 };
 
 const normalize = (s: string) =>
@@ -130,9 +182,13 @@ const normalize = (s: string) =>
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 
-export function filterTasks(tasks: Task[], f: TaskFilters): Task[] {
+export function filterTasks(tasks: Task[], f: TaskFilters, today = todayISO()): Task[] {
   const q = normalize(f.search.trim());
+  const range = dueRange(f, today);
   return tasks.filter((t) => {
+    if (f.due === "overdue" && !isOverdue(t, today)) return false;
+    if (f.due === "none" && t.dueDate) return false;
+    if (range && (!t.dueDate || t.dueDate < range[0] || t.dueDate > range[1])) return false;
     if (f.status === "active" ? t.status === "archived" : f.status !== "all" && t.status !== f.status)
       return false;
     if (f.priority !== "all" && t.priority !== f.priority) return false;
