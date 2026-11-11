@@ -167,7 +167,9 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
     [st, ledger, windowDays],
   );
   const summary = st && ledger && result ? reconSummary(st, ledger, st.entries, ledger.entries, result) : undefined;
-  const conciliated = summary?.unexplained !== undefined && Math.abs(summary.unexplained) < 0.005;
+  const explained = summary?.unexplained !== undefined && Math.abs(summary.unexplained) < 0.005;
+  const pending = result ? result.onlyStatement.length + result.onlyLedger.length : 0;
+  const conciliated = explained && pending === 0;
 
   const fileBase = st ? `${st.bank}${st.period ? ` ${st.period.replace(/\//g, "-")}` : ""}` : "extrato";
   const downloadStatement = () => {
@@ -313,7 +315,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
         </section>
       </div>
 
-      {st && ledger && result && summary && (
+      {st && ledger && result && summary && !ledgerOffPeriod && (
         <>
           <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
@@ -321,9 +323,9 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
               { label: "Saldo no razão", value: brl(summary.ledgerClosing), tone: "" },
               { label: "Diferença", value: brl(summary.difference), tone: "" },
               {
-                label: conciliated ? "Conciliado ✓" : "Diferença não explicada",
+                label: conciliated ? "Conciliado ✓" : explained ? `Explicada por ${pending} pendência${pending > 1 ? "s" : ""}` : "Diferença não explicada",
                 value: brl(summary.unexplained),
-                tone: conciliated ? "green" : "red",
+                tone: conciliated ? "green" : explained ? "amber" : "red",
               },
             ].map((c) => (
               <div
@@ -332,6 +334,8 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
                   "rounded-xl border p-4",
                   c.tone === "green"
                     ? "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
+                    : c.tone === "amber"
+                      ? "border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
                     : c.tone === "red"
                       ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
                       : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900",
@@ -342,7 +346,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
               </div>
             ))}
           </dl>
-          {!conciliated && summary.unexplained !== undefined && (
+          {!explained && summary.unexplained !== undefined && (
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               A diferença não explicada costuma vir de saldo inicial diferente entre extrato e razão, ou de um lançamento
               com valor errado (aparece nas duas listas abaixo com valores parecidos).
