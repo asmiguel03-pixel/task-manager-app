@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { CircleCheck, Download, FileCheck, Lock, TriangleAlert } from "lucide-react";
+import { CircleCheck, Copy, Download, FileCheck, Lock, TriangleAlert } from "lucide-react";
 import { exportBankXlsx, type CapaInfo } from "@/lib/bank-export";
 import {
   bestLedgerTable,
@@ -17,7 +17,7 @@ import {
 } from "@/lib/bank-reconcile";
 import { parseStatement, type Statement } from "@/lib/bank-statement";
 import { readPdfText, toLines } from "@/lib/pdf-text";
-import type { Table } from "@/lib/reconcile";
+import { parseDelimited, tableFromSheet, type Table } from "@/lib/reconcile";
 import { formatBR } from "@/lib/work-tools";
 import { XLSX_MIME } from "@/lib/xlsx";
 import { ColumnSelect, loadTables } from "./reconcile-view";
@@ -89,6 +89,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
   const [ledgerError, setLedgerError] = useState("");
   const [windowDays, setWindowDays] = useState(3);
   const [showMatched, setShowMatched] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   // Dados da capa (empresa e quem assina), lembrados neste navegador.
   const [capa, setCapa] = useState<CapaInfo>({});
   useEffect(() => {
@@ -140,6 +141,18 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
       setLedgerFile(null);
       setLedgerError(e instanceof Error ? e.message : "Não foi possível ler o razão.");
     }
+  };
+
+  /** Razão colado direto do Contmatic/Excel (Ctrl+C / Ctrl+V): substitui o que estava carregado. */
+  const pasteLedger = (text: string) => {
+    setLedgerError("");
+    const table = text.trim() ? tableFromSheet(parseDelimited(text, "Razão colado")) : null;
+    if (!table) {
+      setLedgerError("Não reconheci o razão colado. Copie desde a linha do cabeçalho (DATA, HISTÓRICO, DÉBITO...).");
+      return;
+    }
+    setLedgerFile({ fileName: "Razão colado", kind: "table", tables: [table], tableIndex: 0, columns: guessLedgerColumns(table.headers) });
+    setPasteOpen(false);
   };
 
   const fullLedger: Ledger | undefined = useMemo(() => {
@@ -253,6 +266,24 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
             accept=".xlsx,.csv,.txt,.pdf"
             onFile={openLedger}
           />
+          {pasteOpen ? (
+            <textarea
+              autoFocus
+              rows={4}
+              className={cx(inputCls, "font-mono text-xs")}
+              placeholder="Cole aqui o razão do mês (Ctrl+V), copiado do Contmatic ou do Excel, com o cabeçalho."
+              onPaste={(e) => {
+                e.preventDefault();
+                pasteLedger(e.clipboardData.getData("text"));
+              }}
+              onBlur={() => setPasteOpen(false)}
+            />
+          ) : (
+            <button type="button" className={cx(btnGhost, "self-start")} onClick={() => setPasteOpen(true)}>
+              <Copy className="size-4" aria-hidden />
+              Colar o razão do mês
+            </button>
+          )}
           {ledgerError && <p className="text-sm text-red-600 dark:text-red-400">{ledgerError}</p>}
           {ledgerFile?.kind === "table" && (
             <div className="grid grid-cols-2 gap-2">
