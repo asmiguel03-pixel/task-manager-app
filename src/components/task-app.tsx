@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, FileCheck, Landmark, ListChecks, LogOut, Menu, Plus, SearchX, X } from "lucide-react";
+import { Calculator, Download, FileCheck, Landmark, ListChecks, LogOut, Menu, Plus, SearchX, X } from "lucide-react";
 import { useTasks, type TaskActions } from "@/hooks/use-tasks";
 import { useToasts } from "@/hooks/use-toasts";
 import {
@@ -27,6 +27,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { ToolsDrawer } from "./tools-drawer";
 import { PaymentsCheckView } from "./payments-check-view";
 import { ReconcileView } from "./reconcile-view";
+import { BankReconcileView } from "./bank-reconcile-view";
 import { Toolbar, type View } from "./toolbar";
 import { btnGhost, btnPrimary, ConfirmDialog, IconButton } from "./ui";
 
@@ -34,11 +35,12 @@ type FormState = { mode: "create"; status: Status } | { mode: "edit"; task: Task
 
 const EMPTY_METRICS = { total: 0, pending: 0, done: 0, overdue: 0, completionRate: 0 };
 
-type Area = "tarefas" | "pagamentos" | "conciliacao";
+type Area = "tarefas" | "pagamentos" | "conciliacao" | "bancaria";
 const AREA_TITLES: Record<Area, string> = {
   tarefas: "Tarefas",
   pagamentos: "Pagamentos",
   conciliacao: "Conciliação",
+  bancaria: "Conciliação bancária",
 };
 
 export function TaskApp({ onLogout }: { onLogout?: () => void }) {
@@ -98,7 +100,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     const read = () => {
       const hash = window.location.hash.slice(1);
-      setArea(hash === "pagamentos" || hash === "conciliacao" ? hash : "tarefas");
+      setArea(hash === "pagamentos" || hash === "conciliacao" || hash === "bancaria" ? hash : "tarefas");
     };
     read();
     window.addEventListener("hashchange", read);
@@ -220,6 +222,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
               ["tarefas", "Tarefas", ListChecks],
               ["pagamentos", "Controle de pagamentos", Landmark],
               ["conciliacao", "Conciliar relatório", FileCheck],
+              ["bancaria", "Conciliação bancária", Calculator],
             ] as const
           ).map(([value, label, Icon]) => (
             <li key={value}>
@@ -249,6 +252,8 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
         <PaymentsCheckView toast={toast} />
       ) : area === "conciliacao" ? (
         <ReconcileView toast={toast} />
+      ) : area === "bancaria" ? (
+        <BankReconcileView toast={toast} />
       ) : (
       <>
 

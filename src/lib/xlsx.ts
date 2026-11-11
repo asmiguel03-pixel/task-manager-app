@@ -166,6 +166,8 @@ export interface WorkbookSheet {
   /** Linhas repetidas no topo de cada página impressa (1-based, até esta). */
   printTitleRows?: number;
   landscape?: boolean;
+  /** Ajusta à largura da página em retrato. */
+  fitPortrait?: boolean;
 }
 
 const isStyled = (c: StyledCell | XlsxCell): c is StyledCell =>
@@ -219,10 +221,11 @@ function worksheetXml(sheet: WorkbookSheet): string {
   const merges = sheet.merges?.length
     ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((m) => `<mergeCell ref="${m}"/>`).join("")}</mergeCells>`
     : "";
-  const sheetPr = sheet.landscape ? `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>` : "";
-  const page = sheet.landscape
+  const fit = sheet.landscape || sheet.fitPortrait;
+  const sheetPr = fit ? `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>` : "";
+  const page = fit
     ? `<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>` +
-      `<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>`
+      `<pageSetup paperSize="9" orientation="${sheet.landscape ? "landscape" : "portrait"}" fitToWidth="1" fitToHeight="0"/>`
     : "";
 
   return (
