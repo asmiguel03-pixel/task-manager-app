@@ -8,7 +8,6 @@ import {
   Copy,
   ExternalLink,
   FileCheck,
-  Hash,
   Landmark,
   Link,
   Plus,
@@ -98,54 +97,6 @@ function Section({
       </summary>
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">{children}</div>
     </details>
-  );
-}
-
-// ---------- Só números ----------
-
-function CleanNumbersTool() {
-  const [raw, setRaw] = useState("");
-  const r = cleanAndIdentify(raw);
-  return (
-    <div className="space-y-2">
-      <textarea
-        value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-        rows={2}
-        placeholder="Cole boleto, chave NF-e/CT-e, CNPJ, CPF…"
-        aria-label="Texto para limpar"
-        className={cx(inputCls, "h-auto resize-none py-2 font-mono text-xs")}
-      />
-      {r.kind !== "empty" && (
-        <div
-          className={cx(
-            "rounded-lg p-3 text-sm",
-            r.valid ? "bg-emerald-50 dark:bg-emerald-950/40" : r.kind === "unknown" ? "bg-zinc-100 dark:bg-zinc-800/60" : "bg-red-50 dark:bg-red-950/40",
-          )}
-        >
-          <div className="flex items-center gap-1">
-            <span className="min-w-0 flex-1 break-all font-mono text-xs font-semibold">{r.clean}</span>
-            <CopyButton text={r.clean} label="Copiar só números" />
-          </div>
-          <p
-            className={cx(
-              "mt-1 flex items-start gap-1.5 text-xs",
-              r.valid ? "text-emerald-700 dark:text-emerald-300" : r.kind === "unknown" ? "text-zinc-600 dark:text-zinc-400" : "text-red-600 dark:text-red-400",
-            )}
-          >
-            {r.valid && <Check className="mt-0.5 size-3.5 shrink-0" aria-hidden />}
-            {r.label}
-          </p>
-          {r.formatted && r.formatted !== r.clean && (
-            <div className="mt-1 flex items-center gap-1">
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">{r.formatted}</span>
-              <CopyButton text={r.formatted} label="Copiar formatado" />
-            </div>
-          )}
-        </div>
-      )}
-      <p className="text-xs text-zinc-500">Tira pontos, traços, barras e espaços. Boleto, chave e CNPJ/CPF são conferidos pelos dígitos verificadores.</p>
-    </div>
   );
 }
 
@@ -340,11 +291,25 @@ function BusinessDaysTool() {
   );
 }
 
+/** Linha "Só números" com botão de copiar (aparece mesmo se o código tiver erro). */
+function DigitsRow({ digits }: { digits: string }) {
+  if (!digits) return null;
+  return (
+    <div className="flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 dark:bg-zinc-800/60">
+      <span className="shrink-0 text-[11px] text-zinc-500">Só números:</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-semibold">{digits}</span>
+      <CopyButton text={digits} label="Copiar só os números" />
+    </div>
+  );
+}
+
 // ---------- Chave de acesso NF-e / CT-e ----------
 
 function AccessKeyTool() {
   const [raw, setRaw] = useState("");
-  const result = raw.trim() ? parseAccessKey(raw) : null;
+  const id = raw.trim() ? cleanAndIdentify(raw) : null;
+  const isDoc = id && (id.kind === "cnpj" || id.kind === "cpf");
+  const result = raw.trim() && !isDoc ? parseAccessKey(raw) : null;
   const rows: [string, string | number][] =
     result && result.ok
       ? [
@@ -364,12 +329,31 @@ function AccessKeyTool() {
         value={raw}
         onChange={(e) => setRaw(e.target.value)}
         rows={2}
-        inputMode="numeric"
-        placeholder="Cole a chave de 44 dígitos"
-        aria-label="Chave de acesso"
-        aria-invalid={result ? !result.ok : undefined}
+        placeholder="Cole a chave de 44 dígitos, um CNPJ ou um CPF"
+        aria-label="Chave de acesso, CNPJ ou CPF"
+        aria-invalid={isDoc ? !id?.valid : result ? !result.ok : undefined}
         className={cx(inputCls, "h-auto resize-none py-2 font-mono text-xs")}
       />
+      {id && <DigitsRow digits={id.clean} />}
+      {isDoc && id && (
+        <div className={cx("rounded-lg p-3 text-sm", id.valid ? "bg-emerald-50 dark:bg-emerald-950/40" : "bg-red-50 dark:bg-red-950/40")}>
+          <p
+            className={cx(
+              "flex items-center gap-1.5 font-semibold",
+              id.valid ? "text-emerald-700 dark:text-emerald-300" : "text-red-600 dark:text-red-400",
+            )}
+          >
+            {id.valid && <Check className="size-4" aria-hidden />}
+            {id.label}
+          </p>
+          {id.formatted && (
+            <div className="mt-1 flex items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs">{id.formatted}</span>
+              <CopyButton text={id.formatted} label="Copiar formatado" />
+            </div>
+          )}
+        </div>
+      )}
       {result && !result.ok && <p className="text-xs text-red-600 dark:text-red-400">{result.error}</p>}
       {result && result.ok && (
         <div className="rounded-lg bg-emerald-50 p-3 text-sm dark:bg-emerald-950/40">
@@ -384,13 +368,13 @@ function AccessKeyTool() {
               </div>
             ))}
           </dl>
-          <div className="mt-2 flex items-center gap-1">
-            <span className="truncate font-mono text-[11px] text-zinc-500">{groupKey(result.digits)}</span>
-            <CopyButton text={result.digits} label="Copiar chave só com números" />
-          </div>
+          <p className="mt-2 truncate font-mono text-[11px] text-zinc-500">{groupKey(result.digits)}</p>
         </div>
       )}
-      <p className="text-xs text-zinc-500">Funciona para NF-e, NFC-e, CT-e e MDF-e. Não consulta a SEFAZ.</p>
+      <p className="text-xs text-zinc-500">
+        Chave de NF-e, NFC-e, CT-e e MDF-e; CNPJ (inclusive com letras) e CPF. Confere os dígitos verificadores, não
+        consulta a SEFAZ nem a Receita.
+      </p>
     </div>
   );
 }
@@ -428,6 +412,7 @@ function BoletoTool() {
         aria-invalid={result ? !result.ok : undefined}
         className={cx(inputCls, "h-auto resize-none py-2 font-mono text-xs")}
       />
+      {raw.trim() && <DigitsRow digits={raw.replace(/\D/g, "")} />}
       {result && !result.ok && <p className="text-xs text-red-600 dark:text-red-400">{result.error}</p>}
       {result && result.ok && (
         <div className="rounded-lg bg-emerald-50 p-3 text-sm dark:bg-emerald-950/40">
@@ -460,7 +445,7 @@ function BoletoTool() {
           <div className="mt-2 space-y-1">
             <div className="flex items-center gap-1">
               <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">{formatBoletoLine(result.line)}</span>
-              <CopyButton text={result.line} label="Copiar linha digitável" />
+              <CopyButton text={formatBoletoLine(result.line)} label="Copiar linha formatada" />
             </div>
             <div className="flex items-center gap-1">
               <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">Barras: {result.barcode}</span>
@@ -623,10 +608,7 @@ export function ToolsDrawer({ open, onClose }: { open: boolean; onClose: () => v
           </IconButton>
         </header>
         <div className="flex-1 space-y-3 overflow-y-auto p-3">
-          <Section title="Só números (limpar e conferir)" Icon={Hash} defaultOpen>
-            <CleanNumbersTool />
-          </Section>
-          <Section title="Bloco de notas" Icon={StickyNote}>
+          <Section title="Bloco de notas" Icon={StickyNote} defaultOpen>
             <NotesTool />
           </Section>
           <Section title="Calculadora" Icon={Calculator}>
@@ -635,7 +617,7 @@ export function ToolsDrawer({ open, onClose }: { open: boolean; onClose: () => v
           <Section title="Prazo em dias úteis" Icon={CalendarDays}>
             <BusinessDaysTool />
           </Section>
-          <Section title="Validar chave NF-e / CT-e" Icon={FileCheck}>
+          <Section title="Validar chave, CNPJ ou CPF" Icon={FileCheck}>
             <AccessKeyTool />
           </Section>
           <Section title="Verificar boleto" Icon={Landmark}>
