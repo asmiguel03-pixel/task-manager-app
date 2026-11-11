@@ -1,7 +1,7 @@
 import type { BankReconciliation, Ledger, ReconSummary } from "./bank-reconcile";
 import type { Statement } from "./bank-statement";
 import { formatBR } from "./work-tools";
-import { buildWorkbook, type StyledCell, type WorkbookRow, type WorkbookSheet } from "./xlsx";
+import { buildWorkbook, type SheetImageSpec, type StyledCell, type WorkbookRow, type WorkbookSheet } from "./xlsx";
 
 const money = (v: number | undefined, s: "tdMoney" | "totalMoney" = "tdMoney"): StyledCell => ({ v: v ?? null, s });
 const text = (v: string | undefined, s: "td" | "tdWrap" | "tdCenter" | "totalLabel" = "tdWrap"): StyledCell => ({ v: v ?? "", s });
@@ -125,10 +125,38 @@ function ledgerSheet(ledger: Ledger, r: BankReconciliation, st: Statement): Work
 const fmt = (n: number | undefined) =>
   n === undefined ? "—" : n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }).replace(/\s/g, " ");
 
+/** Logo guardada como base64 (cabe no armazenamento do navegador). */
+export interface CapaLogo {
+  base64: string;
+  ext: "png" | "jpeg" | "gif";
+  width: number;
+  height: number;
+}
+
 export interface CapaInfo {
   company?: string;
   signer?: string;
   role?: string;
+  logoLeft?: CapaLogo;
+  logoRight?: CapaLogo;
+}
+
+const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+
+/** Encaixa a logo numa caixa, mantendo a proporção. */
+function placeLogo(logo: CapaLogo, col: number, row: number, maxW: number, maxH: number, alignRightIn?: number): SheetImageSpec {
+  const k = Math.min(maxW / logo.width, maxH / logo.height, 1);
+  const width = Math.round(logo.width * k);
+  const height = Math.round(logo.height * k);
+  return {
+    data: fromBase64(logo.base64),
+    ext: logo.ext,
+    col,
+    row,
+    width,
+    height,
+    offsetX: alignRightIn ? Math.max(0, alignRightIn - width) : 0,
+  };
 }
 
 const MONTHS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
@@ -234,8 +262,13 @@ function capaSheet(
   const rows: WorkbookRow[] = Array.from({ length: grid.length }, (_, i) => ({
     cells: Array.from({ length: grid[i]?.length ?? 0 }, (_, c) => grid[i]?.[c] ?? null),
   }));
+  const images: SheetImageSpec[] = [];
+  // Mesmo lugar do modelo: logo da empresa à esquerda (C2) e do escritório à direita, alinhada à borda da coluna I.
+  if (info.logoLeft) images.push(placeLogo(info.logoLeft, 2, 1, 80, 78));
+  if (info.logoRight) images.push(placeLogo(info.logoRight, 8, 2, 165, 55, 170));
   return {
     name: "CAPA",
+    images,
     hideGrid: true,
     fitPortrait: true,
     widths: [3, 3, 35, 12.5, 9, 26, 12.5, 21.5, 24, 4.6, 11.5, 15, 14, 16.5],

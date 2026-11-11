@@ -187,6 +187,21 @@ export interface WorkbookSheet {
   fitPortrait?: boolean;
   /** Esconde as linhas de grade (visual de formulário). */
   hideGrid?: boolean;
+  /** Imagens (logos) presas a uma célula. */
+  images?: SheetImageSpec[];
+}
+
+export interface SheetImageSpec {
+  data: Uint8Array;
+  ext: "png" | "jpeg" | "gif";
+  /** Célula de canto superior esquerdo (0-based). */
+  col: number;
+  row: number;
+  /** Tamanho exibido, em pixels. */
+  width: number;
+  height: number;
+  /** Deslocamento dentro da célula, em pixels. */
+  offsetX?: number;
 }
 
 const isStyled = (c: StyledCell | XlsxCell): c is StyledCell =>
@@ -249,7 +264,7 @@ function worksheetXml(sheet: WorkbookSheet): string {
 
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
     sheetPr +
     `<dimension ref="A1:${lastCol}${lastRow}"/>` +
     `<sheetViews><sheetView${sheet.hideGrid ? ` showGridLines="0"` : ""} workbookViewId="0">${freeze}</sheetView></sheetViews>` +
@@ -258,6 +273,7 @@ function worksheetXml(sheet: WorkbookSheet): string {
     filter +
     merges +
     page +
+    (sheet.images?.length ? `<drawing r:id="rId1"/>` : "") +
     `</worksheet>`
   );
 }
@@ -271,7 +287,30 @@ function filterRange(sheet: WorkbookSheet): string {
   return `A${header}:${columnName(cols - 1)}${last}`;
 }
 
-function packageFiles(sheets: WorkbookSheet[]): Record<string, string> {
+function drawingXml(images: SheetImageSpec[]): string {
+  const EMU = 9525;
+  return (
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    images
+      .map(
+        (img, i) =>
+          `<xdr:oneCellAnchor><xdr:from><xdr:col>${img.col}</xdr:col><xdr:colOff>${Math.round((img.offsetX ?? 0) * EMU)}</xdr:colOff><xdr:row>${img.row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
+          `<xdr:ext cx="${Math.round(img.width * EMU)}" cy="${Math.round(img.height * EMU)}"/>` +
+          `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${i + 2}" name="Imagem ${i + 1}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>` +
+          `<xdr:blipFill><a:blip r:embed="rId${i + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>` +
+          `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${Math.round(img.width * EMU)}" cy="${Math.round(img.height * EMU)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>` +
+          `</xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`,
+      )
+      .join("") +
+    `</xdr:wsDr>`
+  );
+}
+
+const RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+const REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+function packageFiles(sheets: WorkbookSheet[]): Record<string, string | Uint8Array> {
   const names = sheets.map((s) => sheetTitle(s.name));
   const quoted = (i: number) => `'${escapeXml(names[i]).replace(/'/g, "''")}'`;
   const abs = (range: string) => range.replace(/([A-Z]+)(\d+)/g, "$$$1$$$2");
@@ -284,12 +323,20 @@ function packageFiles(sheets: WorkbookSheet[]): Record<string, string> {
       : []),
   ]);
 
-  const files: Record<string, string> = {
+  const files: Record<string, string | Uint8Array> = {
     "[Content_Types].xml":
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
       `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
       `<Default Extension="xml" ContentType="application/xml"/>` +
+      `<Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/>` +
+      sheets
+        .map((s, i) =>
+          s.images?.length
+            ? `<Override PartName="/xl/drawings/drawing${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`
+            : "",
+        )
+        .join("") +
       `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
       sheets
         .map(
@@ -324,7 +371,20 @@ function packageFiles(sheets: WorkbookSheet[]): Record<string, string> {
       `</Relationships>`,
     "xl/styles.xml": stylesXml(),
   };
-  sheets.forEach((s, i) => (files[`xl/worksheets/sheet${i + 1}.xml`] = worksheetXml(s)));
+  sheets.forEach((s, i) => {
+    files[`xl/worksheets/sheet${i + 1}.xml`] = worksheetXml(s);
+    if (!s.images?.length) return;
+    const n = i + 1;
+    files[`xl/worksheets/_rels/sheet${n}.xml.rels`] =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${RELS_NS}">` +
+      `<Relationship Id="rId1" Type="${REL_TYPE}/drawing" Target="../drawings/drawing${n}.xml"/></Relationships>`;
+    files[`xl/drawings/drawing${n}.xml`] = drawingXml(s.images);
+    files[`xl/drawings/_rels/drawing${n}.xml.rels`] =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${RELS_NS}">` +
+      s.images.map((img, k) => `<Relationship Id="rId${k + 1}" Type="${REL_TYPE}/image" Target="../media/image${n}_${k + 1}.${img.ext}"/>`).join("") +
+      `</Relationships>`;
+    s.images.forEach((img, k) => (files[`xl/media/image${n}_${k + 1}.${img.ext}`] = img.data));
+  });
   return files;
 }
 
@@ -346,7 +406,7 @@ export function crc32(data: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function zip(files: Record<string, string>, now = new Date()): Uint8Array {
+function zip(files: Record<string, string | Uint8Array>, now = new Date()): Uint8Array {
   const enc = new TextEncoder();
   const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
   const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
@@ -357,7 +417,7 @@ function zip(files: Record<string, string>, now = new Date()): Uint8Array {
 
   for (const [name, content] of Object.entries(files)) {
     const nameBytes = enc.encode(name);
-    const data = enc.encode(content);
+    const data = typeof content === "string" ? enc.encode(content) : content;
     const crc = crc32(data);
 
     const local = new Uint8Array(30 + nameBytes.length + data.length);

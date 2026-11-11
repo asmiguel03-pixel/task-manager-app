@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 import { CircleCheck, Copy, Download, FileCheck, Lock, TriangleAlert } from "lucide-react";
-import { exportBankXlsx, type CapaInfo } from "@/lib/bank-export";
+import { exportBankXlsx, type CapaInfo, type CapaLogo } from "@/lib/bank-export";
+import { readCoverImages } from "@/lib/xlsx-read";
 import {
   bestLedgerTable,
   guessLedgerColumns,
@@ -62,6 +63,31 @@ function DropZone({ id, label, accept, onFile }: { id: string; label: string; ac
 }
 
 const CAPA_KEY = "task-manager:bank-capa";
+
+/** Converte qualquer imagem em PNG (base64) com o tamanho original. */
+async function toLogo(blob: Blob): Promise<CapaLogo | undefined> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("imagem inválida"));
+      img.src = url;
+    });
+    // Limita o tamanho para caber no armazenamento do navegador.
+    const k = Math.min(1, 600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * k));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * k));
+    canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const base64 = canvas.toDataURL("image/png").split(",")[1];
+    return base64 ? { base64, ext: "png", width: canvas.width, height: canvas.height } : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 function Warnings({ list }: { list: string[] }) {
   if (!list.length) return null;
@@ -425,6 +451,75 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
                 </label>
               ))}
             </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {(
+                [
+                  ["logoLeft", "Logo da esquerda"],
+                  ["logoRight", "Logo da direita"],
+                ] as const
+              ).map(([key, label]) => (
+                <div key={key} className="flex flex-col gap-1 text-xs text-zinc-500">
+                  {label}
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-14 w-36 items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-white p-1 dark:border-zinc-700">
+                      {capa[key] ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={`data:image/${capa[key].ext};base64,${capa[key].base64}`} alt={label} className="max-h-full max-w-full" />
+                      ) : (
+                        <span className="text-zinc-400">sem logo</span>
+                      )}
+                    </div>
+                    <label className={cx(btnGhost, "cursor-pointer")}>
+                      {capa[key] ? "Trocar" : "Escolher imagem"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = "";
+                          if (!f) return;
+                          const logo = await toLogo(f);
+                          if (logo) updateCapa({ [key]: logo } as Partial<CapaInfo>);
+                          else toast("Não consegui abrir essa imagem", "error");
+                        }}
+                      />
+                    </label>
+                    {capa[key] && (
+                      <button type="button" className={btnGhost} onClick={() => updateCapa({ [key]: undefined } as Partial<CapaInfo>)}>
+                        Remover
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <label className={cx(btnGhost, "mt-3 cursor-pointer self-start")}>
+              Pegar as logos de uma conciliação anterior (.xlsx)
+              <input
+                type="file"
+                accept=".xlsx"
+                className="sr-only"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!f) return;
+                  try {
+                    const found = await readCoverImages(new Uint8Array(await f.arrayBuffer()));
+                    const logos = (
+                      await Promise.all(found.map(async (img) => ({ col: img.col, logo: await toLogo(new Blob([img.data as BlobPart], { type: `image/${img.ext === "jpg" ? "jpeg" : img.ext}` })) })))
+                    ).filter((x): x is { col: number; logo: CapaLogo } => !!x.logo);
+                    if (!logos.length) throw new Error();
+                    const left = logos.length > 1 || logos[0].col < 5 ? logos[0].logo : undefined;
+                    const right = logos.length > 1 ? logos[logos.length - 1].logo : logos[0].col >= 5 ? logos[0].logo : undefined;
+                    updateCapa({ ...(left ? { logoLeft: left } : {}), ...(right ? { logoRight: right } : {}) });
+                    toast(`${logos.length} logo${logos.length > 1 ? "s" : ""} copiada${logos.length > 1 ? "s" : ""} da capa`, "success");
+                  } catch {
+                    toast("Não achei logos na capa dessa planilha", "error");
+                  }
+                }}
+              />
+            </label>
             <p className="mt-2 text-xs text-zinc-500">Ficam salvos só neste navegador e vão para a aba CAPA do arquivo baixado.</p>
           </details>
 
