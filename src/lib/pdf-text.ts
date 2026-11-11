@@ -9,6 +9,10 @@ export interface TextItem {
   page: number;
   x: number;
   y: number;
+  /** Fim estimado do trecho (x + largura). */
+  endX: number;
+  /** Tamanho efetivo da fonte (para medir espaços). */
+  size: number;
   text: string;
 }
 
@@ -134,6 +138,180 @@ async function streamData(obj: PdfObject): Promise<Uint8Array> {
   return /FlateDecode/.test(filter) ? inflate(obj.stream) : obj.stream;
 }
 
+// ---------- Fontes (ToUnicode / codificação) ----------
+
+/** Converte os bytes de uma string do PDF em texto e mede a largura (em 1/1000 do tamanho da fonte). */
+interface Font {
+  decode: (bytes: string) => string;
+  /** Larguras de cada código da string, em milésimos do tamanho da fonte. */
+  widths: (bytes: string) => number[];
+  /** Quantos bytes por código. */
+  codeBytes: number;
+}
+
+const fromUtf16Hex = (hex: string) => {
+  let out = "";
+  for (let i = 0; i + 3 < hex.length; i += 4) out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
+  return out;
+};
+
+/** Lê um CMap ToUnicode (bfchar / bfrange). */
+function parseToUnicode(cmap: string): { map: Map<number, string>; bytes: number } {
+  const map = new Map<number, string>();
+  let bytes = 1;
+  const cs = /begincodespacerange([\s\S]*?)endcodespacerange/.exec(cmap);
+  if (cs) {
+    const first = /<([0-9a-fA-F]+)>/.exec(cs[1]);
+    if (first) bytes = Math.max(1, first[1].length / 2);
+  }
+  for (const block of cmap.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {
+    for (const m of block[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]*)>/g)) {
+      map.set(parseInt(m[1], 16), fromUtf16Hex(m[2]));
+      bytes = Math.max(bytes, m[1].length / 2);
+    }
+  }
+  for (const block of cmap.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) {
+    for (const m of block[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<[0-9a-fA-F]*>|\[[^\]]*\])/g)) {
+      const lo = parseInt(m[1], 16);
+      const hi = parseInt(m[2], 16);
+      bytes = Math.max(bytes, m[1].length / 2);
+      if (hi - lo > 65535) continue;
+      if (m[3].startsWith("[")) {
+        const list = [...m[3].matchAll(/<([0-9a-fA-F]*)>/g)].map((x) => fromUtf16Hex(x[1]));
+        list.forEach((u, k) => map.set(lo + k, u));
+      } else {
+        const base = m[3].slice(1, -1);
+        const head = base.slice(0, -4);
+        const last = parseInt(base.slice(-4) || "0", 16);
+        for (let c = lo; c <= hi; c++) map.set(c, fromUtf16Hex(head + (last + c - lo).toString(16).padStart(4, "0")));
+      }
+    }
+  }
+  return { map, bytes };
+}
+
+// Nomes de glifo mais comuns em /Differences (letras acentuadas do português).
+const GLYPHS: Record<string, string> = {
+  space: " ", period: ".", comma: ",", hyphen: "-", minus: "-", slash: "/", colon: ":", semicolon: ";",
+  parenleft: "(", parenright: ")", percent: "%", ampersand: "&", plus: "+", asterisk: "*", numbersign: "#",
+  zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9",
+  aacute: "á", agrave: "à", acircumflex: "â", atilde: "ã", eacute: "é", ecircumflex: "ê", iacute: "í",
+  oacute: "ó", ocircumflex: "ô", otilde: "õ", uacute: "ú", ccedilla: "ç", Aacute: "Á", Agrave: "À",
+  Acircumflex: "Â", Atilde: "Ã", Eacute: "É", Ecircumflex: "Ê", Iacute: "Í", Oacute: "Ó", Ocircumflex: "Ô",
+  Otilde: "Õ", Uacute: "Ú", Ccedilla: "Ç", ordfeminine: "ª", ordmasculine: "º", degree: "°",
+};
+const glyphChar = (name: string) =>
+  GLYPHS[name] ?? (/^[A-Za-z]$/.test(name) ? name : /^uni([0-9A-F]{4})$/.exec(name) ? String.fromCharCode(parseInt(name.slice(3), 16)) : "");
+
+const DEFAULT_WIDTH = 550;
+const winAnsiFont: Font = {
+  decode: (s) => [...s].map((ch) => winAnsi(ch.charCodeAt(0))).join(""),
+  widths: (s) => [...s].map((ch) => (ch === " " ? 278 : DEFAULT_WIDTH)),
+  codeBytes: 1,
+};
+
+const numbers = (v: string | undefined) => (v ?? "").replace(/[[\]]/g, " ").trim().split(/\s+/).filter(Boolean).map(Number);
+
+/** Resolve um valor que pode ser uma referência a um objeto (ex.: /Widths 12 0 R). */
+const resolve = (v: string | undefined, objects: Map<number, PdfObject>) =>
+  v && /^\d+\s+\d+\s+R$/.test(v.trim()) ? objects.get(refs(v)[0])?.dict : v;
+
+/** Larguras por código: fontes simples (/FirstChar + /Widths) e CID (/W, /DW). */
+function widthTable(font: PdfObject, objects: Map<number, PdfObject>): (code: number) => number {
+  const type0 = /\/Subtype\s*\/Type0/.test(font.dict);
+  if (type0) {
+    const desc = objects.get(refs(dictValue(font.dict, "DescendantFonts"))[0]);
+    const dw = Number(dictValue(desc?.dict ?? "", "DW")) || 1000;
+    const table = new Map<number, number>();
+    const w = resolve(dictValue(desc?.dict ?? "", "W"), objects) ?? "";
+    // Formato: c [w1 w2 ...]  ou  c1 c2 w
+    const tokens = [...w.matchAll(/\[[^\]]*\]|-?\d+(?:\.\d+)?/g)].map((m) => m[0]);
+    for (let i = 0; i < tokens.length; ) {
+      const c = Number(tokens[i]);
+      if (tokens[i + 1]?.startsWith("[")) {
+        numbers(tokens[i + 1]).forEach((wd, k) => table.set(c + k, wd));
+        i += 2;
+      } else {
+        const c2 = Number(tokens[i + 1]);
+        const wd = Number(tokens[i + 2]);
+        if (c2 - c < 65536) for (let k = c; k <= c2; k++) table.set(k, wd);
+        i += 3;
+      }
+    }
+    return (code) => table.get(code) ?? dw;
+  }
+  const first = Number(dictValue(font.dict, "FirstChar")) || 0;
+  const widths = numbers(resolve(dictValue(font.dict, "Widths"), objects));
+  // Type3: larguras no espaço do glifo, escaladas pela /FontMatrix.
+  const fm = numbers(dictValue(font.dict, "FontMatrix"));
+  const scale = /\/Subtype\s*\/Type3/.test(font.dict) && fm.length === 6 ? fm[0] * 1000 : 1;
+  return (code) => {
+    const w = widths[code - first];
+    return w !== undefined && Number.isFinite(w) ? w * scale : code === 32 ? 278 : DEFAULT_WIDTH;
+  };
+}
+
+async function loadFont(font: PdfObject | undefined, objects: Map<number, PdfObject>): Promise<Font> {
+  if (!font) return winAnsiFont;
+  const type0 = /\/Subtype\s*\/Type0/.test(font.dict);
+  const widthOf = widthTable(font, objects);
+  const tu = refs(dictValue(font.dict, "ToUnicode"))[0];
+  const tuObj = tu !== undefined ? objects.get(tu) : undefined;
+  let map: Map<number, string> | undefined;
+  let codeBytes = type0 ? 2 : 1;
+  if (tuObj?.stream) {
+    const parsed = parseToUnicode(latin1(await streamData(tuObj)));
+    map = parsed.map;
+    codeBytes = type0 ? Math.max(2, parsed.bytes) : parsed.bytes;
+  }
+  const codes = (s: string) => {
+    const out: number[] = [];
+    for (let i = 0; i + codeBytes <= s.length; i += codeBytes) {
+      let code = 0;
+      for (let k = 0; k < codeBytes; k++) code = code * 256 + s.charCodeAt(i + k);
+      out.push(code);
+    }
+    return out;
+  };
+  // Fonte simples sem ToUnicode: WinAnsi + /Differences.
+  const diffs = new Map<number, string>();
+  if (!map && !type0) {
+    const enc = dictValue(font.dict, "Encoding");
+    const encDict = enc?.startsWith("<<") ? enc : enc && /\d+\s+\d+\s+R/.test(enc) ? objects.get(refs(enc)[0])?.dict : undefined;
+    const d = encDict ? dictValue(encDict, "Differences") : undefined;
+    if (d) {
+      let code = 0;
+      for (const tok of d.replace(/[[\]]/g, " ").trim().split(/\s+|(?=\/)/)) {
+        if (/^\d+$/.test(tok)) code = Number(tok);
+        else if (tok.startsWith("/")) {
+          const ch = glyphChar(tok.slice(1));
+          if (ch) diffs.set(code, ch);
+          code++;
+        }
+      }
+    }
+  }
+  return {
+    codeBytes,
+    decode: (s) =>
+      codes(s)
+        .map((c) => (map ? map.get(c) ?? (codeBytes === 1 ? winAnsi(c) : "") : type0 ? "" : diffs.get(c) ?? winAnsi(c)))
+        .join(""),
+    widths: (s) => codes(s).map(widthOf),
+  };
+}
+
+async function fontsOf(resources: string, objects: Map<number, PdfObject>): Promise<Map<string, Font>> {
+  const v = dictValue(resources, "Font");
+  const map = new Map<string, Font>();
+  if (!v) return map;
+  const inner = v.startsWith("<<") ? v : objects.get(refs(v)[0])?.dict ?? "";
+  for (const m of inner.matchAll(/\/([^\s/<>[\]]+)\s+(\d+)\s+\d+\s+R/g)) {
+    map.set(m[1], await loadFont(objects.get(Number(m[2])), objects));
+  }
+  return map;
+}
+
 // ---------- Conteúdo da página ----------
 
 type Matrix = [number, number, number, number, number, number];
@@ -245,6 +423,11 @@ async function contentText(
   depth = 0,
 ): Promise<void> {
   const tokens = tokenize(content);
+  const fonts = await fontsOf(resources, objects);
+  let font: Font = winAnsiFont;
+  let charSpacing = 0;
+  let wordSpacing = 0;
+  let hScale = 1;
   let ctm = ctm0;
   const gstack: Matrix[] = [];
   let tm: Matrix = IDENTITY;
@@ -256,12 +439,27 @@ async function contentText(
     const t = args[args.length - k];
     return t && t.t === "num" ? t.v : 0;
   };
-  const emit = (s: string) => {
-    const text = [...s].map((ch) => winAnsi(ch.charCodeAt(0))).join("");
-    if (!text.trim()) return;
+  /** Mostra uma string: registra o trecho e avança a posição do texto. */
+  const show = (s: string) => {
+    const text = font.decode(s);
+    const widths = font.widths(s);
+    let advance = 0;
+    const isSpace = font.codeBytes === 1 ? [...s].map((c) => c === " ") : widths.map(() => false);
+    widths.forEach((w, k) => {
+      advance += ((w / 1000) * fontSize + charSpacing + (isSpace[k] ? wordSpacing : 0)) * hScale;
+    });
     const m = multiply(tm, ctm);
-    out.push({ page, x: m[4], y: m[5], text });
+    const scaleX = Math.hypot(m[0], m[1]) || 1;
+    const size = fontSize * (Math.hypot(m[2], m[3]) || 1);
+    if (text.trim()) {
+      out.push({ page, x: m[4], y: m[5], endX: m[4] + advance * scaleX, size, text });
+    }
+    tm = multiply([1, 0, 0, 1, advance, 0], tm);
   };
+  const shift = (thousandths: number) => {
+    tm = multiply([1, 0, 0, 1, (-thousandths / 1000) * fontSize * hScale, 0], tm);
+  };
+
   const xobjects = (() => {
     const v = dictValue(resources, "XObject");
     if (!v) return new Map<string, number>();
@@ -288,8 +486,20 @@ async function contentText(
         tm = IDENTITY;
         tlm = IDENTITY;
         break;
-      case "Tf":
+      case "Tf": {
         fontSize = num(1) || fontSize;
+        const name = args[args.length - 2];
+        if (name?.t === "name") font = fonts.get(name.v) ?? winAnsiFont;
+        break;
+      }
+      case "Tc":
+        charSpacing = num(1);
+        break;
+      case "Tw":
+        wordSpacing = num(1);
+        break;
+      case "Tz":
+        hScale = num(1) / 100 || 1;
         break;
       case "TL":
         leading = num(1);
@@ -313,7 +523,7 @@ async function contentText(
         break;
       case "Tj": {
         const s = args[args.length - 1];
-        if (s?.t === "str") emit(s.v);
+        if (s?.t === "str") show(s.v);
         break;
       }
       case "'":
@@ -321,19 +531,16 @@ async function contentText(
         tlm = multiply([1, 0, 0, 1, 0, -leading], tlm);
         tm = tlm;
         const s = args[args.length - 1];
-        if (s?.t === "str") emit(s.v);
+        if (s?.t === "str") show(s.v);
         break;
       }
       case "TJ": {
         const arr = args[args.length - 1];
         if (arr?.t === "arr") {
-          let s = "";
           for (const part of arr.v) {
-            if (part.t === "str") s += part.v;
-            // Ajuste grande de espaçamento costuma ser um espaço entre palavras.
-            else if (part.t === "num" && part.v < -(fontSize > 0 ? 200 : 200)) s += " ";
+            if (part.t === "str") show(part.v);
+            else if (part.t === "num") shift(part.v);
           }
-          emit(s);
         }
         break;
       }
@@ -400,18 +607,37 @@ export async function readPdfText(bytes: Uint8Array): Promise<TextItem[]> {
   return out;
 }
 
-/** Agrupa os trechos em linhas (mesma página e mesma altura), de cima para baixo. */
+/**
+ * Agrupa os trechos em linhas (mesma página e mesma altura), de cima para baixo,
+ * e junta letras/pedaços vizinhos em células: espaço pequeno vira espaço entre
+ * palavras; espaço grande separa colunas.
+ */
 export function toLines(items: TextItem[], tolerance = 2): TextLine[] {
   const sorted = [...items].sort((a, b) => a.page - b.page || b.y - a.y || a.x - b.x);
-  const lines: TextLine[] = [];
+  const rows: { page: number; y: number; items: TextItem[] }[] = [];
   for (const it of sorted) {
-    const last = lines[lines.length - 1];
-    if (last && last.page === it.page && Math.abs(last.y - it.y) <= tolerance) last.items.push({ x: it.x, text: it.text });
-    else lines.push({ page: it.page, y: it.y, items: [{ x: it.x, text: it.text }], text: "" });
+    const last = rows[rows.length - 1];
+    if (last && last.page === it.page && Math.abs(last.y - it.y) <= tolerance) last.items.push(it);
+    else rows.push({ page: it.page, y: it.y, items: [it] });
   }
-  for (const l of lines) {
-    l.items.sort((a, b) => a.x - b.x);
-    l.text = l.items.map((i) => i.text.trim()).filter(Boolean).join(" ");
-  }
-  return lines;
+  return rows.map((row) => {
+    const cells: { x: number; endX: number; size: number; text: string; lastLen: number }[] = [];
+    for (const it of [...row.items].sort((a, b) => a.x - b.x)) {
+      const cell = cells[cells.length - 1];
+      const size = Math.max(it.size, 1);
+      const gap = cell ? it.x - cell.endX : Infinity;
+      // Junta só fragmentos (letras soltas, como em PDFs gerados por navegador)
+      // ou pedaços praticamente encostados; trechos inteiros próximos são colunas.
+      const fragment = it.text.trim().length <= 2 || (cell?.lastLen ?? 99) <= 2;
+      if (cell && gap <= 0.45 * size && (fragment || gap <= 0.12 * size)) {
+        cell.text += (gap > 0.2 * size ? " " : "") + it.text;
+        cell.endX = Math.max(cell.endX, it.endX);
+        cell.lastLen = it.text.trim().length;
+      } else {
+        cells.push({ x: it.x, endX: it.endX, size, text: it.text, lastLen: it.text.trim().length });
+      }
+    }
+    const lineItems = cells.map((c) => ({ x: c.x, text: c.text.replace(/\s+/g, " ").trim() })).filter((c) => c.text);
+    return { page: row.page, y: row.y, items: lineItems, text: lineItems.map((c) => c.text).join(" ") };
+  });
 }

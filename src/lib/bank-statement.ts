@@ -177,13 +177,144 @@ function parseBB(lines: TextLine[]): Statement {
     const balanceCol = money.filter((m) => m.x >= 495);
     const value = (valueCol[0] ?? money[0]).value;
     const balance = balanceCol.length ? balanceCol[balanceCol.length - 1].value : undefined;
-    const hist = line.items.filter((i) => i.x >= 240 && i.x < 360 && !MONEY_CD.test(i.text.trim())).map((i) => i.text.trim());
+    // Histórico (às vezes grudado no lote: "14134 Crédito CASSI").
+    const hist = line.items
+      .filter((i) => i.x >= 220 && i.x < 360 && !MONEY_CD.test(i.text.trim()))
+      .map((i) => i.text.trim().replace(/^\d{4,5}\s+(?=\D)/, ""))
+      .filter((t) => !/^\d{4,5}$/.test(t));
     const doc = line.items.find((i) => i.x >= 360 && i.x < 450 && /^[\d.]+$/.test(i.text.trim()))?.text.trim();
     last = { date, description: hist.join(" "), doc, amount: value, balance };
     st.entries.push(last);
     if (balance !== undefined) lastBalance = balance;
   }
   if (st.closing === undefined) st.closing = lastBalance;
+  checkBalances(st);
+  return st;
+}
+
+// ---------- Santander (Santander Empresas) ----------
+
+/** Lançamentos do mais novo para o mais antigo, sem linha de saldo anterior. */
+function parseSantander(lines: TextLine[]): Statement {
+  const st: Statement = { bank: "Santander", entries: [], warnings: [] };
+  const all = lines.map((l) => l.text).join("\n");
+  const acc = /Ag[êe]ncia:\s*(\d+)\s+Conta:\s*([\d-]+)/.exec(all);
+  if (acc) st.account = `Ag. ${acc[1]} · CC ${acc[2]}`;
+  const per = /Per[íi]odos?:\s*(\d{2}\/\d{2}\/\d{4})\s*a\s*(\d{2}\/\d{2}\/\d{4})/.exec(all);
+  if (per) st.period = `${per[1]} a ${per[2]}`;
+
+  type Tx = { page: number; y: number; entry: StatementEntry; desc: { y: number; text: string }[] };
+  const txs: Tx[] = [];
+  const descLines: { page: number; y: number; text: string }[] = [];
+  let inTable = false;
+  for (const line of lines) {
+    if (/Hist[óo]rico/.test(line.text) && /Saldo/.test(line.text)) {
+      inTable = true;
+      continue;
+    }
+    if (/Saldo de ContaMax|Entenda a composi/i.test(line.text)) break;
+    if (!inTable) continue;
+    const first = line.items[0];
+    const dm = first && first.x < 60 ? /^(\d{2}\/\d{2}\/\d{4})\s*(.*)$/.exec(first.text) : null;
+    const money = line.items.filter((i) => MONEY.test(i.text.trim()));
+    if (dm && money.length) {
+      const balanceItem = money.find((m) => m.x >= 495);
+      const valueItem = money.find((m) => m.x < 495);
+      if (!valueItem) continue;
+      const doc = line.items.find((i) => i.x >= 290 && i.x < 400 && /^\d+$/.test(i.text.trim()))?.text.trim();
+      const inline = [dm[2], ...line.items.filter((i) => i !== first && i.x >= 80 && i.x < 290).map((i) => i.text)]
+        .map((t) => t.trim())
+        .filter(Boolean);
+      txs.push({
+        page: line.page,
+        y: line.y,
+        entry: {
+          date: iso(dm[1])!,
+          description: "",
+          doc,
+          amount: parseMoneyBR(valueItem.text.trim()),
+          balance: balanceItem ? parseMoneyBR(balanceItem.text.trim()) : undefined,
+        },
+        desc: inline.length ? [{ y: line.y, text: inline.join(" ") }] : [],
+      });
+    } else if (!money.length && line.items.every((i) => i.x >= 80 && i.x < 300)) {
+      descLines.push({ page: line.page, y: line.y, text: line.text });
+    }
+  }
+  for (const d of descLines) {
+    let best: Tx | undefined;
+    for (const tx of txs) if (tx.page === d.page && (!best || Math.abs(tx.y - d.y) < Math.abs(best.y - d.y))) best = tx;
+    if (best && Math.abs(best.y - d.y) <= 12) best.desc.push(d);
+  }
+  // Do mais antigo para o mais novo.
+  for (const tx of txs.reverse()) {
+    tx.entry.description = tx.desc
+      .sort((a, b) => b.y - a.y)
+      .map((d) => d.text)
+      .join(" · ");
+    st.entries.push(tx.entry);
+  }
+  const oldest = st.entries[0];
+  const newest = st.entries[st.entries.length - 1];
+  if (oldest?.balance !== undefined) st.opening = round2(oldest.balance - oldest.amount);
+  if (newest?.balance !== undefined) st.closing = newest.balance;
+  checkBalances(st);
+  return st;
+}
+
+// ---------- Caixa ----------
+
+/** Sinal de menos às vezes separado do valor (até em outra linha); saldo como "R$ 1.234,56". */
+function parseCaixa(lines: TextLine[]): Statement {
+  const st: Statement = { bank: "Caixa", entries: [], warnings: [] };
+  const all = lines.map((l) => l.text).join("\n");
+  const ag = /Ag[êe]ncia:\s*(\d+)/.exec(all);
+  const cc = /Conta:\s*([\d-]+)/.exec(all);
+  if (ag || cc) st.account = `Ag. ${ag?.[1] ?? "?"} · CC ${cc?.[1] ?? "?"}`;
+  const per = /Lan[çc]amentos de\s*(\d{2}\/\d{2}\/\d{4})\s*[àa]\s*(\d{2}\/\d{2}\/\d{4})/.exec(all);
+  if (per) st.period = `${per[1]} a ${per[2]}`;
+
+  const header = lines.find((l) => /Valor\s*\(R\$\)/.test(l.text) && /Saldo/.test(l.text));
+  const xValue = header?.items.find((i) => /Valor/.test(i.text))?.x ?? 440;
+  const xBalance = header?.items.find((i) => /Saldo/.test(i.text))?.x ?? 505;
+  const xHist = header?.items.find((i) => /Hist/.test(i.text))?.x ?? 300;
+  const near = (l: TextLine, y: number, page: number) => l.page === page && Math.abs(l.y - y) <= 10;
+  const signed = (t: string) => {
+    const m = /(-)?\s*R?\$?\s*(-)?\s*(\d{1,3}(?:\.\d{3})*,\d{2})/.exec(t);
+    return m ? parseMoneyBR(m[3]) * (m[1] || m[2] ? -1 : 1) : undefined;
+  };
+
+  for (const line of lines) {
+    const first = line.items[0];
+    if (!first || first.x > 60 || !DATE.test(first.text.trim())) continue;
+    if (/SALDO DIA|SALDO ANTERIOR/i.test(line.text)) continue;
+    const around = lines.filter((l) => near(l, line.y, line.page));
+    const valueText = around
+      .flatMap((l) => l.items.filter((i) => i.x >= xValue - 15 && i.x < xBalance - 5).map((i) => ({ y: l.y, t: i.text })))
+      .sort((a, b) => b.y - a.y)
+      .map((v) => v.t)
+      .join(" ");
+    const amount = signed(valueText.replace(/\s+/g, " "));
+    if (amount === undefined || amount === 0) continue;
+    const balanceItem = line.items.find((i) => i.x >= xBalance - 5);
+    const desc = around
+      .filter((l) => l === line || !l.items.some((i) => DATE.test(i.text.trim())))
+      .sort((a, b) => b.y - a.y)
+      .flatMap((l) => l.items.filter((i) => i.x >= xHist - 10 && i.x < xValue - 15).map((i) => i.text.trim()))
+      .filter(Boolean);
+    const doc = line.items.find((i) => i.x > 200 && i.x < xHist - 10 && /^\d+$/.test(i.text.trim()))?.text.trim();
+    st.entries.push({
+      date: iso(line.items.length > 1 && DATE.test(line.items[1].text.trim()) ? line.items[1].text : first.text)!,
+      description: desc.join(" "),
+      doc: doc && doc !== "0" ? doc : undefined,
+      amount,
+      balance: balanceItem ? signed(balanceItem.text) : undefined,
+    });
+  }
+  const first = st.entries[0];
+  if (first?.balance !== undefined) st.opening = round2(first.balance - first.amount);
+  const last = st.entries[st.entries.length - 1];
+  if (last?.balance !== undefined) st.closing = last.balance;
   checkBalances(st);
   return st;
 }
@@ -249,5 +380,7 @@ export function parseStatement(lines: TextLine[]): Statement {
   const all = lines.map((l) => l.text).join("\n");
   if (/Extrato Mensal \/ Por Per[ií]odo|Extrato de: Ag:/.test(all) && /Dcto\./.test(all)) return parseBradesco(lines);
   if (/Dt\.\s*balancete/.test(all) && /Ouvidoria BB|Conta corrente/.test(all)) return parseBB(lines);
+  if (/Santander/i.test(all) && /Hist[óo]rico/.test(all)) return parseSantander(lines);
+  if (/SAC CAIXA|Al[ôo] CAIXA/i.test(all) && /Data de/.test(all)) return parseCaixa(lines);
   return parseGeneric(lines);
 }

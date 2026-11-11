@@ -115,4 +115,48 @@ describe("leitura de PDF", () => {
       ["2026-10-02", -120, "Tarifa"],
     ]);
   });
+
+  it("Caixa: sinal de menos separado do valor e saldo em R$", async () => {
+    const content =
+      cell(21, 732, "Ag\\352ncia: 03337") + cell(190, 732, "Conta: 000577247208-5") +
+      cell(361, 690, "Lan\\347amentos de 01/10/2026 \\340 26/10/2026") +
+      cell(28, 657, "Data de") + cell(134, 657, "Data de") +
+      cell(238, 650, "Documento") + cell(304, 650, "Hist\\363rico") + cell(447, 650, "Valor\\(R$\\)") + cell(511, 650, "Saldo\\(R$\\)") +
+      cell(304, 616, "MENSALIDADE") +
+      cell(28, 609, "13/10/2026") + cell(134, 609, "13/10/2026") + cell(238, 609, "202609") + cell(460, 609, "- 189,00") + cell(511, 609, "R$ 203,76") +
+      cell(28, 576, "13/10/2026") + cell(134, 576, "13/10/2026") + cell(304, 576, "SAUDE CAIXA") + cell(453, 576, "13.078,08") + cell(511, 576, "R$ 13.281,84") +
+      cell(28, 549, "13/10/2026") + cell(134, 549, "13/10/2026") + cell(304, 549, "SALDO DIA") + cell(478, 549, "0,00") + cell(511, 549, "R$ 13.281,84") +
+      cell(493, 522, "-") +
+      cell(28, 516, "23/10/2026") + cell(134, 516, "23/10/2026") + cell(238, 516, "932834") + cell(304, 516, "ENVIO DE TED") + cell(511, 516, "R$ 281,84") +
+      cell(453, 509, "13.000,00") +
+      cell(28, 437, "SAC CAIXA");
+    const { readPdfText, toLines } = await import("./pdf-text");
+    const { parseStatement } = await import("./bank-statement");
+    const s = parseStatement(toLines(await readPdfText(pdf(content))));
+    expect(s).toMatchObject({ bank: "Caixa", opening: 392.76, closing: 281.84, warnings: [] });
+    expect(s.entries.map((e) => [e.date, e.amount])).toEqual([
+      ["2026-10-13", -189],
+      ["2026-10-13", 13078.08],
+      ["2026-10-23", -13000],
+    ]);
+  });
+
+  it("Santander: do mais novo para o mais antigo, sem saldo anterior", async () => {
+    const content =
+      cell(429, 783, "Santander Empresas") + cell(367, 736, "Ag\\352ncia: 4395") + cell(484, 736, "Conta: 130002838") +
+      cell(49, 662, "Data") + cell(95, 662, "Hist\\363rico") + cell(306, 662, "Documento") + cell(423, 662, "Valor \\(R$\\)") + cell(518, 662, "Saldo \\(R$\\)") +
+      cell(33, 639, "30/10/2026") + cell(92, 639, "Ted Recebida") + cell(423, 639, "10.000,00") + cell(514, 639, "10.900,00") +
+      cell(92, 621, "Pgto Fornec Tit Proprios") +
+      cell(33, 614, "29/10/2026") + cell(312, 614, "301029") + cell(425, 614, "-100,00") + cell(514, 614, "900,00") +
+      cell(92, 607, "4395.4905337371") +
+      cell(390, 560, "Saldo de ContaMax");
+    const { readPdfText, toLines } = await import("./pdf-text");
+    const { parseStatement } = await import("./bank-statement");
+    const s = parseStatement(toLines(await readPdfText(pdf(content))));
+    expect(s).toMatchObject({ bank: "Santander", opening: 1000, closing: 10900, warnings: [] });
+    expect(s.entries.map((e) => [e.date, e.amount, e.description])).toEqual([
+      ["2026-10-29", -100, "Pgto Fornec Tit Proprios · 4395.4905337371"],
+      ["2026-10-30", 10000, "Ted Recebida"],
+    ]);
+  });
 });
