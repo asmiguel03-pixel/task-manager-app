@@ -30,8 +30,13 @@ export function tableFromSheet(sheet: ReadSheet): Table | null {
   if (!sorted.length) return null;
   let best = sorted[0];
   let bestScore = -1;
+  // Nomes de coluna conhecidos pesam mais (evita pegar um título ou código de conta).
+  const KNOWN = /^(data|dt\b|hist|d[eé]bito|cr[eé]dito|saldo|valor|montante|fornecedor|cliente|documento|doc\b|n[ºo°]|nf|fatura|vencimento|venc|refer|lote|lanc|filial|t[ií]tulo|supplier|reference|amount|journal)/i;
   for (const entry of sorted.slice(0, 20)) {
-    const score = [...entry[1].values()].filter((v) => typeof v === "string" && v.trim().length <= 40).length;
+    const texts = [...entry[1].values()].filter((v): v is string => typeof v === "string");
+    const score =
+      texts.filter((v) => v.trim().length <= 40).length +
+      5 * texts.filter((v) => KNOWN.test(v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim())).length;
     if (score > bestScore) {
       best = entry;
       bestScore = score;

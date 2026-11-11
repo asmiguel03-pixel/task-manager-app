@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { guessLedgerColumns, ledgerFromTable, reconcileBank, reconSummary, type LedgerEntry } from "./bank-reconcile";
+import { bestLedgerTable, guessLedgerColumns, ledgerForPeriod, ledgerFromTable, statementRange, reconcileBank, reconSummary, type LedgerEntry } from "./bank-reconcile";
 import type { StatementEntry } from "./bank-statement";
 import { tableFromSheet } from "./reconcile";
 import type { CellValue } from "./xlsx-read";
@@ -158,5 +158,54 @@ describe("leitura de PDF", () => {
       ["2026-10-29", -100, "Pgto Fornec Tit Proprios · 4395.4905337371"],
       ["2026-10-30", 10000, "Ted Recebida"],
     ]);
+  });
+});
+
+describe("razão no layout do Contmatic", () => {
+  const sheet = (name: string, data: CellValue[][]) => ({
+    name,
+    hidden: false,
+    rows: new Map(data.map((r, i) => [i + 1, new Map(r.map((v, j) => [j, v] as [number, CellValue]).filter(([, v]) => v !== ""))])),
+  });
+  const capa = sheet("CAPA", [["Empresa Exemplo Ltda"], ["Razão analítico"], ["Período: 01/09/2026 a 31/10/2026"]]);
+  const razao = sheet("Razão", [
+    ["1.01.01.02.01.01.000006", "5 - BANCO EXEMPLO"],
+    ["DATA", "LOTE", "LANC", "C/PARTIDA", "HISTORICO", "DÉBITO", "CRÉDITO", "SALDO"],
+    ["", "", "", "Saldo anterior", "", "", "", "-"],
+    ["02/09/2026", 67, 9296, "1.01.02.02.01.01.000001", "RECEBIMENTO CLIENTE A", "400,00", "-", "400,00"],
+    ["15/09/2026", 68, 9301, "2.01.01.01.01.01.000002", "PAGAMENTO FORNECEDOR B", "-", "150,00", "250,00"],
+    ["01/10/2026", 70, 9400, "1.01.02.02.01.01.000001", "RECEBIMENTO CLIENTE C", "1.000,00", "-", "1.250,00"],
+    ["20/10/2026", 71, 9410, "4.01.01.01.01.01.000003", "TARIFA BANCÁRIA", "-", "50,00", "1.200,00"],
+    ["03/11/2026", 72, 9500, "1.01.02.02.01.01.000001", "RECEBIMENTO CLIENTE D", "10,00", "-", "1.210,00"],
+  ]);
+
+  it("acha o cabeçalho, a aba certa e as colunas", () => {
+    const tables = [capa, razao].map((s) => tableFromSheet(s)!).filter(Boolean);
+    const i = bestLedgerTable(tables);
+    expect(tables[i].name).toBe("Razão");
+    expect(tables[i].headers[0]).toBe("DATA");
+    const c = guessLedgerColumns(tables[i].headers);
+    expect(c.date).toBe(0);
+    expect(c.doc).toBe(1);
+    expect(c.description).toBe(4);
+    expect(c.debit).toBe(5);
+    expect(c.credit).toBe(6);
+    expect(c.balance).toBe(7);
+    const ledger = ledgerFromTable(tables[i], c);
+    expect(ledger.opening).toBe(0);
+    expect(ledger.entries.length).toBe(5);
+  });
+
+  it("recorta o razão no período do extrato", () => {
+    const t = tableFromSheet(razao)!;
+    const ledger = ledgerFromTable(t, guessLedgerColumns(t.headers));
+    const range = statementRange("01/10/2026 a 31/10/2026", [])!;
+    expect(range).toEqual(["2026-10-01", "2026-10-31"]);
+    expect(statementRange("10/2026", [])).toEqual(["2026-10-01", "2026-10-31"]);
+    const p = ledgerForPeriod(ledger, range);
+    expect(p.entries.map((e) => e.amount)).toEqual([1000, -50]);
+    expect(p.opening).toBe(250);
+    expect(p.closing).toBe(1200);
+    expect(p.cut).toEqual({ before: 2, after: 1 });
   });
 });

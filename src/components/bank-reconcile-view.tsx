@@ -4,7 +4,10 @@ import { useId, useMemo, useState } from "react";
 import { CircleCheck, Download, FileCheck, Lock, TriangleAlert } from "lucide-react";
 import { exportBankXlsx } from "@/lib/bank-export";
 import {
+  bestLedgerTable,
   guessLedgerColumns,
+  ledgerForPeriod,
+  statementRange,
   ledgerFromPdfLines,
   ledgerFromTable,
   reconcileBank,
@@ -109,7 +112,8 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
         setLedgerFile({ fileName: file.name, kind: "pdf", ledger });
       } else {
         const tables = await loadTables(file);
-        setLedgerFile({ fileName: file.name, kind: "table", tables, tableIndex: 0, columns: guessLedgerColumns(tables[0].headers) });
+        const tableIndex = bestLedgerTable(tables);
+        setLedgerFile({ fileName: file.name, kind: "table", tables, tableIndex, columns: guessLedgerColumns(tables[tableIndex].headers) });
       }
     } catch (e) {
       setLedgerFile(null);
@@ -117,13 +121,21 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
     }
   };
 
-  const ledger: Ledger | undefined = useMemo(() => {
+  const fullLedger: Ledger | undefined = useMemo(() => {
     if (!ledgerFile) return undefined;
     if (ledgerFile.kind === "pdf") return ledgerFile.ledger;
     return ledgerFromTable(ledgerFile.tables[ledgerFile.tableIndex], ledgerFile.columns);
   }, [ledgerFile]);
 
   const st = statement?.data;
+  // Usa do razão só o período do extrato (o razão costuma vir com meses anteriores).
+  const periodLedger = useMemo(() => {
+    if (!fullLedger || !st) return undefined;
+    const range = statementRange(st.period, st.entries.map((e) => e.date));
+    return range ? ledgerForPeriod(fullLedger, range) : undefined;
+  }, [fullLedger, st]);
+  const ledger: Ledger | undefined = periodLedger ?? fullLedger;
+  const outside = periodLedger ? periodLedger.cut.before + periodLedger.cut.after : 0;
   const result = useMemo(
     () => (st && ledger ? reconcileBank(st.entries, ledger.entries, windowDays) : undefined),
     [st, ledger, windowDays],
@@ -251,6 +263,12 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
                 <dt className="text-zinc-500">Lançamentos</dt>
                 <dd className="font-medium">{ledger.entries.length}</dd>
               </dl>
+              {outside > 0 && (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {outside} lançamento{outside > 1 ? "s" : ""} do razão fora do período do extrato não entra
+                  {outside > 1 ? "m" : ""} na conciliação. Saldo inicial calculado no início do período.
+                </p>
+              )}
               <Warnings list={ledger.warnings} />
             </>
           )}

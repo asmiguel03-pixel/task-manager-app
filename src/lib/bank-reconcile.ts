@@ -69,6 +69,29 @@ const signedBalance = (v: unknown): number | undefined => {
   return m[2] === "C" ? -n : n;
 };
 
+/** Escolhe a aba que parece o razão (tem data e débito/crédito ou valor), ignorando capas. */
+export function bestLedgerTable(tables: Table[]): number {
+  let best = 0;
+  let bestScore = -1;
+  tables.forEach((t, i) => {
+    const c = guessLedgerColumns(t.headers);
+    const hasDate = t.headers.some((h) => /^data|^dt\b|^dia/.test(norm(h)));
+    const score =
+      (hasDate ? 3 : 0) +
+      (c.debit !== undefined ? 3 : 0) +
+      (c.credit !== undefined ? 3 : 0) +
+      (c.value !== undefined ? 2 : 0) +
+      (c.balance !== undefined ? 1 : 0) +
+      (c.description !== undefined ? 1 : 0) +
+      Math.min(t.rows.length, 50) / 100;
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  });
+  return best;
+}
+
 export function ledgerFromTable(t: Table, c: LedgerColumns): Ledger {
   const ledger: Ledger = { entries: [], warnings: [] };
   for (const row of t.rows) {
@@ -76,7 +99,9 @@ export function ledgerFromTable(t: Table, c: LedgerColumns): Ledger {
     const text = (i?: number) => (i === undefined || row[i] === undefined ? "" : String(row[i]).trim());
     const hist = text(c.description);
     if (/saldo anterior|saldo inicial/i.test(hist) || (!date && /saldo anterior/i.test(row.map(String).join(" ")))) {
-      ledger.opening = signedBalance(c.balance !== undefined ? row[c.balance] : undefined) ?? ledger.opening;
+      const raw = c.balance !== undefined ? row[c.balance] : undefined;
+      // Contmatic mostra saldo zerado como "-".
+      ledger.opening = typeof raw === "string" && /^\s*-\s*$/.test(raw) ? 0 : (signedBalance(raw) ?? ledger.opening);
       continue;
     }
     if (!date) continue;
@@ -372,4 +397,44 @@ export function reconSummary(
     explained,
     unexplained: difference !== undefined ? Math.round((difference - explained) * 100) / 100 : undefined,
   };
+}
+
+// ---------- Período ----------
+
+/** Período do extrato: pelo texto ("01/10/2026 a 31/10/2026", "10/2026") ou pelas datas dos lançamentos. */
+export function statementRange(period: string | undefined, dates: string[]): [string, string] | undefined {
+  const two = period && /(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/.exec(period);
+  if (two) return [`${two[3]}-${two[2]}-${two[1]}`, `${two[6]}-${two[5]}-${two[4]}`];
+  const month = period && /^(\d{2})\s*\/\s*(\d{4})$/.exec(period.trim());
+  if (month) {
+    const last = new Date(Date.UTC(Number(month[2]), Number(month[1]), 0)).getUTCDate();
+    return [`${month[2]}-${month[1]}-01`, `${month[2]}-${month[1]}-${String(last).padStart(2, "0")}`];
+  }
+  if (!dates.length) return undefined;
+  const sorted = [...dates].sort();
+  return [sorted[0], sorted[sorted.length - 1]];
+}
+
+/** Recorta o razão no período do extrato, com o saldo do razão no início e no fim dele. */
+export function ledgerForPeriod(ledger: Ledger, [start, end]: [string, string]): Ledger & { cut: { before: number; after: number } } {
+  const before = ledger.entries.filter((e) => e.date < start);
+  const inside = ledger.entries.filter((e) => e.date >= start && e.date <= end);
+  const after = ledger.entries.filter((e) => e.date > end);
+  const sum = (list: LedgerEntry[]) => list.reduce((s, e) => s + e.amount, 0);
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const opening =
+    before.length && before[before.length - 1].balance !== undefined
+      ? before[before.length - 1].balance
+      : ledger.opening !== undefined
+        ? round(ledger.opening + sum(before))
+        : inside[0]?.balance !== undefined
+          ? round(inside[0].balance - inside[0].amount)
+          : undefined;
+  const closing =
+    inside.length && inside[inside.length - 1].balance !== undefined
+      ? inside[inside.length - 1].balance
+      : opening !== undefined
+        ? round(opening + sum(inside))
+        : undefined;
+  return { opening, closing, entries: inside, warnings: ledger.warnings, cut: { before: before.length, after: after.length } };
 }
