@@ -30,7 +30,20 @@ const date = (iso: string | undefined, style: StyleName = "tdDate"): StyledCell 
  * Monta a aba no layout das planilhas de controle (mesmas colunas e ordem),
  * com título, cabeçalho destacado, status coloridos, vencidos em vermelho e totais.
  */
-export function paymentSheet(entries: Payment[], sheet: PaymentSheet, month: string, today: string): WorkbookSheet {
+/** Colunas extras ao fim da tabela (ex.: resultado da conferência com o SAP). */
+export interface ExtraColumns {
+  header: string[];
+  widths: number[];
+  cells: (p: Payment) => StyledCell[];
+}
+
+export function paymentSheet(
+  entries: Payment[],
+  sheet: PaymentSheet,
+  month: string,
+  today: string,
+  extra?: ExtraColumns,
+): WorkbookSheet {
   const withTitle = sheet === "criticos" || entries.some((p) => p.titleNumber);
   const header = [
     "Fornecedor",
@@ -43,8 +56,9 @@ export function paymentSheet(entries: Payment[], sheet: PaymentSheet, month: str
     ...(withTitle ? ["N° do título"] : []),
     withTitle ? "Observação" : "Observações Depto Financeiro",
   ];
-  const lastCol = columnName(header.length - 1);
   const obsCol = columnName(header.length - 1);
+  if (extra) header.push(...extra.header);
+  const lastCol = columnName(header.length - 1);
   const summary = paymentSummary(entries, today);
   const [, m] = month.split("-").map(Number);
 
@@ -63,6 +77,7 @@ export function paymentSheet(entries: Payment[], sheet: PaymentSheet, month: str
       date(p.paidDate),
       ...(withTitle ? [{ v: p.titleNumber ?? "", s: "tdWrap" as const }] : []),
       { v: observationText(p), s: STATUS_STYLE[p.status] },
+      ...(extra ? extra.cells(p) : []),
     ];
     return { cells };
   });
@@ -85,7 +100,7 @@ export function paymentSheet(entries: Payment[], sheet: PaymentSheet, month: str
     filterRow: 3,
     printTitleRows: 3,
     merges: [`A1:${lastCol}1`, `A2:${lastCol}2`],
-    widths: [44, 11, 13, 12, 16, 12, 14, ...(withTitle ? [22] : []), 42],
+    widths: [44, 11, 13, 12, 16, 12, 14, ...(withTitle ? [22] : []), 42, ...(extra?.widths ?? [])],
     rows: [
       {
         height: 28,
@@ -113,8 +128,14 @@ export function paymentSheet(entries: Payment[], sheet: PaymentSheet, month: str
   };
 }
 
-export function exportPaymentsXlsx(entries: Payment[], sheet: PaymentSheet, month: string, today: string) {
-  return buildWorkbook([paymentSheet(entries, sheet, month, today)]);
+export function exportPaymentsXlsx(
+  entries: Payment[],
+  sheet: PaymentSheet,
+  month: string,
+  today: string,
+  extra?: ExtraColumns,
+) {
+  return buildWorkbook([paymentSheet(entries, sheet, month, today, extra)]);
 }
 
 export const paymentFileName = (sheet: PaymentSheet, month: string) => {

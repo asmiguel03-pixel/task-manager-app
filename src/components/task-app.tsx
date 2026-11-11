@@ -25,7 +25,7 @@ import { TaskList } from "./task-list";
 import { Toaster } from "./toaster";
 import { ThemeToggle } from "./theme-toggle";
 import { ToolsDrawer } from "./tools-drawer";
-import { PaymentsView } from "./payments-view";
+import { PaymentsCheckView } from "./payments-check-view";
 import { ReconcileView } from "./reconcile-view";
 import { Toolbar, type View } from "./toolbar";
 import { btnGhost, btnPrimary, ConfirmDialog, IconButton } from "./ui";
@@ -246,7 +246,7 @@ export function TaskApp({ onLogout }: { onLogout?: () => void }) {
       <ToolsDrawer open={toolsOpen} onClose={closeTools} />
 
       {area === "pagamentos" ? (
-        <PaymentsView toast={toast} />
+        <PaymentsCheckView toast={toast} />
       ) : area === "conciliacao" ? (
         <ReconcileView toast={toast} />
       ) : (

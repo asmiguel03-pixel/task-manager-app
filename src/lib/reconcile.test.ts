@@ -62,6 +62,10 @@ describe("leitura", () => {
     expect(
       guessSapColumns(["Conta", "Referência", "Nº documento", "Data do documento", "Vencimento líquido", "Montante em moeda interna", "Doc.compensação", "Data de compensação"]),
     ).toEqual({ doc: 1, doc2: 2, amount: 5, due: 4, clearingDate: 7, clearingDoc: 6 });
+    // Extração do SAP em inglês (S/4HANA), como a usada nas planilhas de controle.
+    expect(
+      guessSapColumns(["Supplier Name", "Supplier", "Reference", "Journal Entry", "Journal Entry Date", "Posting Date", "Amount (CoCode Crcy)", "Assignment", "Clearing Journal Entry", "Net Due Date"]),
+    ).toEqual({ doc: 2, doc2: 3, name: 0, amount: 6, due: 9, clearingDoc: 8 });
   });
 });
 

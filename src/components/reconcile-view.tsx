@@ -45,7 +45,7 @@ const PAYMENT_BADGE: Record<PaymentState, string> = {
 type Filter = "all" | "not_posted" | "overdue_open" | "diff" | "paid";
 
 /** Lê .xlsx, ou .csv/.txt (UTF-8 ou o padrão do Windows usado pelo SAP). */
-async function loadTables(file: File): Promise<Table[]> {
+export async function loadTables(file: File): Promise<Table[]> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let sheets: ReadSheet[];
   if (/\.(csv|txt)$/i.test(file.name)) {
@@ -70,14 +70,14 @@ async function loadTables(file: File): Promise<Table[]> {
   return tables;
 }
 
-interface Source<C> {
+export interface Source<C> {
   fileName: string;
   tables: Table[];
   tableIndex: number;
   columns: C;
 }
 
-function ColumnSelect({
+export function ColumnSelect({
   label,
   value,
   headers,
@@ -114,7 +114,7 @@ function ColumnSelect({
   );
 }
 
-function SourceCard<C extends object>({
+export function SourceCard<C extends object>({
   step,
   title,
   hint,

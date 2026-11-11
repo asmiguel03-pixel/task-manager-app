@@ -146,6 +146,8 @@ export interface ReportColumns {
 
 export interface SapColumns {
   doc: number;
+  /** Nome do fornecedor (para achar lançamentos sem nº de título). */
+  name?: number;
   doc2?: number;
   amount?: number;
   due?: number;
@@ -185,12 +187,13 @@ export function guessReportColumns(headers: string[]): ReportColumns {
 
 export function guessSapColumns(headers: string[]): SapColumns {
   return {
-    doc: find(headers, [/^referencia|^refer/, /nota|nf/, /n[ºo°.]?\s*doc|documento/], /compens/) ?? 0,
-    doc2: find(headers, [/n[ºo°.]?\s*doc|^documento/, /atribuic/], /compens|refer/),
-    amount: find(headers, [/montante.*(interna|mi\b)|montante/, /^valor/]),
-    due: find(headers, [/venc/]),
-    clearingDate: find(headers, [/data.*compens|compens.*data/]),
-    clearingDoc: find(headers, [/doc.*compens|compens.*doc/]),
+    doc: find(headers, [/^referencia|^refer|^reference/, /nota|nf/, /n[ºo°.]?\s*doc|documento|^journal entry$/], /compens|clearing/) ?? 0,
+    doc2: find(headers, [/n[ºo°.]?\s*doc|^documento|^journal entry$/, /atribuic|^assignment/], /compens|clearing|refer|date|data/),
+    name: find(headers, [/supplier name|nome do fornecedor|^nome|razao social|^fornecedor$/]),
+    amount: find(headers, [/montante.*(interna|mi\b)|montante|^amount/, /^valor/]),
+    due: find(headers, [/net due|venc|due date/]),
+    clearingDate: find(headers, [/data.*compens|compens.*data|clearing date/]),
+    clearingDoc: find(headers, [/doc.*compens|compens.*doc|clearing (journal|doc|entry)/]),
   };
 }
 
