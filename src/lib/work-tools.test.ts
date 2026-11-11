@@ -4,9 +4,12 @@ import {
   addBusinessDays,
   brazilHolidays,
   businessDaysBetween,
+  cleanAndIdentify,
   dueDateFromFactor,
   easterSunday,
   evaluateExpression,
+  isValidCNPJ,
+  isValidCPF,
   parseAccessKey,
   parseBoleto,
 } from "./work-tools";
@@ -129,5 +132,32 @@ describe("boleto", () => {
 
   it("recusa tamanho errado", () => {
     expect(parseBoleto("123").ok).toBe(false);
+  });
+});
+
+describe("só números", () => {
+  it("limpa e reconhece a linha digitável", () => {
+    const r = cleanAndIdentify("34191.09008 14213.212591 70000.130008 5 16340023245720");
+    expect(r).toMatchObject({ clean: "34191090081421321259170000130008516340023245720", kind: "boleto", valid: true });
+  });
+
+  it("aponta erro de digitação no boleto", () => {
+    const r = cleanAndIdentify("34191.09008 14213.212591 70000.130008 5 16340023245721");
+    expect(r.kind).toBe("boleto");
+    expect(r.valid).toBe(false);
+  });
+
+  it("separa chave de acesso de código de barras (44 dígitos)", () => {
+    expect(cleanAndIdentify("3526 1101 2345 6700 0190 5500 1000 0123 4518 7654 3213").kind).toBe("access_key");
+    expect(cleanAndIdentify("00196758600001026560000001149718606852452211")).toMatchObject({ kind: "boleto", valid: true });
+  });
+
+  it("valida CNPJ numérico, alfanumérico e CPF", () => {
+    expect(cleanAndIdentify("11.222.333/0001-81")).toMatchObject({ kind: "cnpj", valid: true, clean: "11222333000181" });
+    expect(cleanAndIdentify("11.222.333/0001-82").valid).toBe(false);
+    expect(isValidCNPJ("12.ABC.345/01DE-35")).toBe(true);
+    expect(cleanAndIdentify("12.ABC.345/01DE-35")).toMatchObject({ kind: "cnpj", valid: true, clean: "12ABC34501DE35" });
+    expect(cleanAndIdentify("529.982.247-25")).toMatchObject({ kind: "cpf", valid: true });
+    expect(isValidCPF("111.111.111-11")).toBe(false);
   });
 });

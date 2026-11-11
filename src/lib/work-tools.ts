@@ -542,3 +542,89 @@ export function nextBusinessDay(iso: string): string {
   if (!d) return iso;
   return addBusinessDays(toISO(addDays(d, -1)), 1)?.date ?? iso;
 }
+
+// ---------- CNPJ / CPF ----------
+
+/** Valor de um caractere no cálculo do CNPJ (dígitos e, no CNPJ alfanumérico, letras: código ASCII − 48). */
+const cnpjValue = (ch: string) => ch.charCodeAt(0) - 48;
+
+/** Valida CNPJ numérico ou alfanumérico (14 caracteres, os 2 últimos sempre dígitos). */
+export function isValidCNPJ(raw: string): boolean {
+  const c = raw.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  if (!/^[0-9A-Z]{12}\d{2}$/.test(c) || /^(\d)\1{13}$/.test(c)) return false;
+  const dv = (base: string) => {
+    let sum = 0;
+    let weight = 2;
+    for (let i = base.length - 1; i >= 0; i--) {
+      sum += cnpjValue(base[i]) * weight;
+      weight = weight === 9 ? 2 : weight + 1;
+    }
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  const d1 = dv(c.slice(0, 12));
+  const d2 = dv(c.slice(0, 12) + d1);
+  return c.endsWith(`${d1}${d2}`);
+}
+
+export function isValidCPF(raw: string): boolean {
+  const c = raw.replace(/\D/g, "");
+  if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
+  const dv = (len: number) => {
+    let sum = 0;
+    for (let i = 0; i < len; i++) sum += Number(c[i]) * (len + 1 - i);
+    const r = (sum * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dv(9) === Number(c[9]) && dv(10) === Number(c[10]);
+}
+
+export const formatCPF = (c: string) => `${c.slice(0, 3)}.${c.slice(3, 6)}.${c.slice(6, 9)}-${c.slice(9)}`;
+
+// ---------- "Só números": limpa e identifica ----------
+
+export type NumberKind = "boleto" | "access_key" | "cnpj" | "cpf" | "unknown" | "empty";
+
+export interface CleanResult {
+  /** Só os dígitos (ou, no CNPJ alfanumérico, letras maiúsculas e dígitos). */
+  clean: string;
+  kind: NumberKind;
+  valid: boolean;
+  /** Descrição curta do que foi identificado. */
+  label: string;
+  /** Versão formatada, quando faz sentido. */
+  formatted?: string;
+}
+
+export function cleanAndIdentify(raw: string): CleanResult {
+  const alnum = raw.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  // CNPJ alfanumérico (a partir de 2026): mantém as letras.
+  if (/[A-Z]/.test(alnum) && /^[0-9A-Z]{12}\d{2}$/.test(alnum)) {
+    const valid = isValidCNPJ(alnum);
+    return { clean: alnum, kind: "cnpj", valid, label: valid ? "CNPJ alfanumérico válido" : "CNPJ alfanumérico com dígito verificador inválido", formatted: formatCNPJ(alnum) };
+  }
+  const d = raw.replace(/\D/g, "");
+  if (!d) return { clean: "", kind: "empty", valid: false, label: "" };
+
+  if (d.length === 47 || d.length === 48) {
+    const b = parseBoleto(d);
+    return { clean: d, kind: "boleto", valid: b.ok, label: b.ok ? "Linha digitável de boleto válida" : b.error, formatted: formatBoletoLine(d) };
+  }
+  if (d.length === 44) {
+    // 44 dígitos: chave de acesso (NF-e/CT-e) ou código de barras de boleto.
+    const key = parseAccessKey(d);
+    if (key.ok) return { clean: d, kind: "access_key", valid: true, label: `Chave de acesso válida — ${key.model}`, formatted: groupKey(d) };
+    const b = parseBoleto(d);
+    if (b.ok) return { clean: d, kind: "boleto", valid: true, label: "Código de barras de boleto válido", formatted: b.line ? formatBoletoLine(b.line) : undefined };
+    return { clean: d, kind: "access_key", valid: false, label: "44 dígitos, mas não é chave de acesso nem código de barras válido — confira a digitação." };
+  }
+  if (d.length === 14) {
+    const valid = isValidCNPJ(d);
+    return { clean: d, kind: "cnpj", valid, label: valid ? "CNPJ válido" : "CNPJ com dígito verificador inválido", formatted: formatCNPJ(d) };
+  }
+  if (d.length === 11) {
+    const valid = isValidCPF(d);
+    return { clean: d, kind: "cpf", valid, label: valid ? "CPF válido" : "CPF com dígito verificador inválido", formatted: formatCPF(d) };
+  }
+  return { clean: d, kind: "unknown", valid: false, label: `${d.length} dígitos` };
+}

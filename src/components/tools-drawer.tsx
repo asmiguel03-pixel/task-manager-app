@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   FileCheck,
+  Hash,
   Landmark,
   Link,
   Plus,
@@ -18,6 +19,7 @@ import {
 import { newId, todayISO } from "@/lib/task-domain";
 import {
   addBusinessDays,
+  cleanAndIdentify,
   businessDaysBetween,
   evaluateExpression,
   formatBoletoLine,
@@ -96,6 +98,54 @@ function Section({
       </summary>
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">{children}</div>
     </details>
+  );
+}
+
+// ---------- Só números ----------
+
+function CleanNumbersTool() {
+  const [raw, setRaw] = useState("");
+  const r = cleanAndIdentify(raw);
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        rows={2}
+        placeholder="Cole boleto, chave NF-e/CT-e, CNPJ, CPF…"
+        aria-label="Texto para limpar"
+        className={cx(inputCls, "h-auto resize-none py-2 font-mono text-xs")}
+      />
+      {r.kind !== "empty" && (
+        <div
+          className={cx(
+            "rounded-lg p-3 text-sm",
+            r.valid ? "bg-emerald-50 dark:bg-emerald-950/40" : r.kind === "unknown" ? "bg-zinc-100 dark:bg-zinc-800/60" : "bg-red-50 dark:bg-red-950/40",
+          )}
+        >
+          <div className="flex items-center gap-1">
+            <span className="min-w-0 flex-1 break-all font-mono text-xs font-semibold">{r.clean}</span>
+            <CopyButton text={r.clean} label="Copiar só números" />
+          </div>
+          <p
+            className={cx(
+              "mt-1 flex items-start gap-1.5 text-xs",
+              r.valid ? "text-emerald-700 dark:text-emerald-300" : r.kind === "unknown" ? "text-zinc-600 dark:text-zinc-400" : "text-red-600 dark:text-red-400",
+            )}
+          >
+            {r.valid && <Check className="mt-0.5 size-3.5 shrink-0" aria-hidden />}
+            {r.label}
+          </p>
+          {r.formatted && r.formatted !== r.clean && (
+            <div className="mt-1 flex items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">{r.formatted}</span>
+              <CopyButton text={r.formatted} label="Copiar formatado" />
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-xs text-zinc-500">Tira pontos, traços, barras e espaços. Boleto, chave e CNPJ/CPF são conferidos pelos dígitos verificadores.</p>
+    </div>
   );
 }
 
@@ -573,7 +623,10 @@ export function ToolsDrawer({ open, onClose }: { open: boolean; onClose: () => v
           </IconButton>
         </header>
         <div className="flex-1 space-y-3 overflow-y-auto p-3">
-          <Section title="Bloco de notas" Icon={StickyNote} defaultOpen>
+          <Section title="Só números (limpar e conferir)" Icon={Hash} defaultOpen>
+            <CleanNumbersTool />
+          </Section>
+          <Section title="Bloco de notas" Icon={StickyNote}>
             <NotesTool />
           </Section>
           <Section title="Calculadora" Icon={Calculator}>
