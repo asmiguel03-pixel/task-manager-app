@@ -136,6 +136,11 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
   }, [fullLedger, st]);
   const ledger: Ledger | undefined = periodLedger ?? fullLedger;
   const outside = periodLedger ? periodLedger.cut.before + periodLedger.cut.after : 0;
+  const br = (iso: string) => iso.split("-").reverse().join("/");
+  const ledgerSpan = fullLedger?.entries.length
+    ? [br(fullLedger.entries.map((e) => e.date).sort()[0]), br(fullLedger.entries.map((e) => e.date).sort().at(-1)!)]
+    : undefined;
+  const ledgerOffPeriod = !!periodLedger && !periodLedger.entries.length && !!fullLedger?.entries.length;
   const result = useMemo(
     () => (st && ledger ? reconcileBank(st.entries, ledger.entries, windowDays) : undefined),
     [st, ledger, windowDays],
@@ -263,7 +268,19 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
                 <dt className="text-zinc-500">Lançamentos</dt>
                 <dd className="font-medium">{ledger.entries.length}</dd>
               </dl>
-              {outside > 0 && (
+              {ledgerSpan && (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Datas no razão: {ledgerSpan[0]} a {ledgerSpan[1]}
+                </p>
+              )}
+              {ledgerOffPeriod && (
+                <Warnings
+                  list={[
+                    `Nenhum lançamento do razão cai no período do extrato (${st?.period ?? ""}). Confira se é o razão do mesmo mês ou se a aba escolhida é a certa.`,
+                  ]}
+                />
+              )}
+              {outside > 0 && !ledgerOffPeriod && (
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   {outside} lançamento{outside > 1 ? "s" : ""} do razão fora do período do extrato não entra
                   {outside > 1 ? "m" : ""} na conciliação. Saldo inicial calculado no início do período.
