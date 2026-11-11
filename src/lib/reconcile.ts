@@ -12,6 +12,8 @@ export interface Table {
   headerRow: number; // 1-based, para exibição
   headers: string[];
   rows: (CellValue | undefined)[][];
+  /** Linhas acima do cabeçalho (título, código da conta...). */
+  above?: (CellValue | undefined)[][];
 }
 
 const norm = (s: string) =>
@@ -55,9 +57,14 @@ export function tableFromSheet(sheet: ReadSheet): Table | null {
     .filter((r) => r.some((v) => v !== undefined && String(v).trim() !== ""));
   // Remove colunas totalmente vazias (sem cabeçalho e sem dados).
   const keep = headers.map((h, c) => !!h || rows.some((r) => r[c] !== undefined));
+  const above = sorted
+    .filter(([r]) => r < headerRow)
+    .map(([, cells]) => Array.from({ length: width }, (_, c) => cells.get(c)))
+    .filter((r) => r.some((v) => v !== undefined && String(v).trim() !== ""));
   return {
     name: sheet.name,
     headerRow,
+    above,
     headers: headers.filter((_, c) => keep[c]).map((h, i) => h || `Coluna ${i + 1}`),
     rows: rows.map((r) => r.filter((_, c) => keep[c])),
   };

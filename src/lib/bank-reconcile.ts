@@ -16,9 +16,14 @@ export interface LedgerEntry {
   /** Positivo = débito na conta banco (entrada); negativo = crédito (saída). */
   amount: number;
   balance?: number;
+  /** Nº do lançamento e conta de contrapartida (Contmatic). */
+  lanc?: string;
+  counterpart?: string;
 }
 
 export interface Ledger {
+  /** Conta contábil do razão, ex.: "1.01.01.02.01.01.000006" e "5 - BANCO DO BRASIL". */
+  account?: { code: string; name?: string };
   opening?: number;
   closing?: number;
   entries: LedgerEntry[];
@@ -36,6 +41,8 @@ export interface LedgerColumns {
   /** Valor único com sinal ou com coluna D/C. */
   value?: number;
   dc?: number;
+  lanc?: number;
+  counterpart?: number;
   balance?: number;
 }
 
@@ -56,11 +63,13 @@ export function guessLedgerColumns(headers: string[]): LedgerColumns {
     value: find(/^valor|montante/),
     dc: find(/^d\/c$|natureza|^dc$/),
     balance: find(/saldo/),
+    lanc: find(/^lanc/),
+    counterpart: find(/partida/),
   };
 }
 
 const signedBalance = (v: unknown): number | undefined => {
-  if (typeof v === "number") return v;
+  if (typeof v === "number") return Math.round(v * 100) / 100;
   if (typeof v !== "string") return undefined;
   const m = /(-?[\d.]+,\d{2})\s*([CD])?\s*$/.exec(v.trim());
   if (!m) return toAmount(v);
@@ -119,11 +128,30 @@ export function ledgerFromTable(t: Table, c: LedgerColumns): Ledger {
     }
     if (!amount) continue;
     const balance = c.balance !== undefined ? signedBalance(row[c.balance]) : undefined;
-    ledger.entries.push({ date, description: hist, doc: text(c.doc) || undefined, amount: Math.round(amount * 100) / 100, balance });
+    ledger.entries.push({
+      date,
+      description: hist,
+      doc: text(c.doc) || undefined,
+      lanc: text(c.lanc) || undefined,
+      counterpart: text(c.counterpart) || undefined,
+      amount: Math.round(amount * 100) / 100,
+      balance,
+    });
     if (balance !== undefined) ledger.closing = balance;
   }
+  ledger.account = accountFromRows(t.above ?? []);
   finishLedger(ledger);
   return ledger;
+}
+
+/** Código da conta contábil (ex.: 1.01.01.02.01.01.000006) nas linhas acima do cabeçalho. */
+function accountFromRows(rows: unknown[][]): Ledger["account"] {
+  for (const row of rows) {
+    const cells = row.map((v) => (v === undefined || v === null ? "" : String(v).trim()));
+    const i = cells.findIndex((v) => /^\d+(\.\d+){3,}$/.test(v));
+    if (i >= 0) return { code: cells[i], name: cells.slice(i + 1).find((v) => v) || undefined };
+  }
+  return undefined;
 }
 
 /** Razão em PDF: linhas com data + valores; débito/crédito/saldo pelas colunas do cabeçalho. */
@@ -436,5 +464,5 @@ export function ledgerForPeriod(ledger: Ledger, [start, end]: [string, string]):
       : opening !== undefined
         ? round(opening + sum(inside))
         : undefined;
-  return { opening, closing, entries: inside, warnings: ledger.warnings, cut: { before: before.length, after: after.length } };
+  return { account: ledger.account, opening, closing, entries: inside, warnings: ledger.warnings, cut: { before: before.length, after: after.length } };
 }

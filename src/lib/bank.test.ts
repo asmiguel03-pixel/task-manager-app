@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { bestLedgerTable, guessLedgerColumns, ledgerForPeriod, ledgerFromTable, statementRange, reconcileBank, reconSummary, type LedgerEntry } from "./bank-reconcile";
 import type { StatementEntry } from "./bank-statement";
+import { exportBankXlsx } from "./bank-export";
 import { tableFromSheet } from "./reconcile";
+import { readXlsx } from "./xlsx-read";
 import type { CellValue } from "./xlsx-read";
 
 const st = (date: string, amount: number, description = ""): StatementEntry => ({ date, amount, description });
@@ -207,5 +209,28 @@ describe("razão no layout do Contmatic", () => {
     expect(p.opening).toBe(250);
     expect(p.closing).toBe(1200);
     expect(p.cut).toEqual({ before: 2, after: 1 });
+    expect(p.account).toEqual({ code: "1.01.01.02.01.01.000006", name: "5 - BANCO EXEMPLO" });
+  });
+
+  it("baixa a conciliação com CAPA, EXTRATO e Razão", async () => {
+    const t = tableFromSheet(razao)!;
+    const ledger = ledgerForPeriod(ledgerFromTable(t, guessLedgerColumns(t.headers)), ["2026-10-01", "2026-10-31"]);
+    const statement = {
+      bank: "Banco Exemplo",
+      period: "10/2026",
+      opening: 250,
+      closing: 1200,
+      entries: [st("2026-10-01", 1000, "Crédito"), st("2026-10-20", -50, "Tarifa")],
+      warnings: [],
+    };
+    const r = reconcileBank(statement.entries, ledger.entries, 3);
+    const s = reconSummary(statement, ledger, statement.entries, ledger.entries, r);
+    const sheets = await readXlsx(exportBankXlsx(statement, ledger, r, s, { company: "EMPRESA" }, "2026-10-31"));
+    expect(sheets.map((x) => x.name)).toEqual(["CAPA", "EXTRATO", "Razão"]);
+    const capa = sheets[0].rows;
+    expect(capa.get(7)?.get(7)).toBe("Outubro/2026");
+    expect(capa.get(9)?.get(2)).toBe("1.01.01.02.01.01.000006");
+    expect(capa.get(12)?.get(7)).toBe(1200);
+    expect(capa.get(17)?.get(8)).toBe(0);
   });
 });

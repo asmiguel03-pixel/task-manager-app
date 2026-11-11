@@ -1,8 +1,8 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { CircleCheck, Download, FileCheck, Lock, TriangleAlert } from "lucide-react";
-import { exportBankXlsx } from "@/lib/bank-export";
+import { exportBankXlsx, type CapaInfo } from "@/lib/bank-export";
 import {
   bestLedgerTable,
   guessLedgerColumns,
@@ -61,6 +61,8 @@ function DropZone({ id, label, accept, onFile }: { id: string; label: string; ac
   );
 }
 
+const CAPA_KEY = "task-manager:bank-capa";
+
 function Warnings({ list }: { list: string[] }) {
   if (!list.length) return null;
   return (
@@ -87,6 +89,25 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
   const [ledgerError, setLedgerError] = useState("");
   const [windowDays, setWindowDays] = useState(3);
   const [showMatched, setShowMatched] = useState(false);
+  // Dados da capa (empresa e quem assina), lembrados neste navegador.
+  const [capa, setCapa] = useState<CapaInfo>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CAPA_KEY);
+      if (raw) setCapa(JSON.parse(raw) as CapaInfo);
+    } catch {
+      /* sem armazenamento: segue sem os dados */
+    }
+  }, []);
+  const updateCapa = (patch: Partial<CapaInfo>) => {
+    const next = { ...capa, ...patch };
+    setCapa(next);
+    try {
+      localStorage.setItem(CAPA_KEY, JSON.stringify(next));
+    } catch {
+      /* ignora */
+    }
+  };
 
   const openStatement = async (file: File) => {
     setStatementError("");
@@ -129,11 +150,11 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
 
   const st = statement?.data;
   // Usa do razão só o período do extrato (o razão costuma vir com meses anteriores).
-  const periodLedger = useMemo(() => {
-    if (!fullLedger || !st) return undefined;
-    const range = statementRange(st.period, st.entries.map((e) => e.date));
-    return range ? ledgerForPeriod(fullLedger, range) : undefined;
-  }, [fullLedger, st]);
+  const range = useMemo(() => (st ? statementRange(st.period, st.entries.map((e) => e.date)) : undefined), [st]);
+  const periodLedger = useMemo(
+    () => (fullLedger && range ? ledgerForPeriod(fullLedger, range) : undefined),
+    [fullLedger, range],
+  );
   const ledger: Ledger | undefined = periodLedger ?? fullLedger;
   const outside = periodLedger ? periodLedger.cut.before + periodLedger.cut.after : 0;
   const br = (iso: string) => iso.split("-").reverse().join("/");
@@ -156,7 +177,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
   };
   const downloadRecon = () => {
     if (!st || !ledger || !result || !summary) return;
-    downloadBytes(exportBankXlsx(st, ledger, result, summary), `Conciliacao ${fileBase}.xlsx`);
+    downloadBytes(exportBankXlsx(st, ledger, result, summary, capa, range?.[1]), `Conciliacao ${fileBase}.xlsx`);
     toast("Conciliação baixada", "success");
   };
 
@@ -348,6 +369,29 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
               Baixar conciliação
             </button>
           </div>
+
+          <details className="rounded-xl border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <summary className="cursor-pointer font-medium">Dados da capa da conciliação</summary>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              {(
+                [
+                  ["company", "Empresa"],
+                  ["signer", "Quem assina"],
+                  ["role", "Cargo"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex flex-col gap-1 text-xs text-zinc-500">
+                  {label}
+                  <input
+                    className={inputCls}
+                    value={capa[key] ?? ""}
+                    onChange={(e) => updateCapa({ [key]: e.target.value } as Partial<CapaInfo>)}
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">Ficam salvos só neste navegador e vão para a aba CAPA do arquivo baixado.</p>
+          </details>
 
           <div className="grid gap-4 xl:grid-cols-2">
             {[

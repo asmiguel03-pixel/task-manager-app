@@ -61,11 +61,13 @@ const FONTS = [
 
 const solid = (rgb: string) =>
   `<fill><patternFill patternType="solid"><fgColor rgb="FF${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
-const FILL_COLORS = ["E0E7FF", "1E293B", "334155", "DCFCE7", "DBEAFE", "FEF3C7", "FFEDD5", "F1F5F9", "FEE2E2"] as const;
+const FILL_COLORS = ["E0E7FF", "1E293B", "334155", "DCFCE7", "DBEAFE", "FEF3C7", "FFEDD5", "F1F5F9", "FEE2E2", "203864", "D9E1F2"] as const;
 const fillId = (rgb: (typeof FILL_COLORS)[number]) => FILL_COLORS.indexOf(rgb) + 2;
 
 const NUM_FMT_DATE = 164;
 const NUM_FMT_BRL = 165;
+/** Número contábil: zero aparece como "-". */
+const NUM_FMT_ACC = 166;
 
 interface StyleDef {
   font?: number;
@@ -97,6 +99,20 @@ const STYLES = {
   statusOrange: { border: true, wrap: true, fill: "FFEDD5" },
   statusGray: { border: true, wrap: true, fill: "F1F5F9" },
   statusRed: { border: true, wrap: true, fill: "FEE2E2", font: 5 },
+  // Capa da conciliação (faixas azul-escuras com texto branco).
+  bar: { font: 4, fill: "203864" },
+  barRight: { font: 4, fill: "203864", h: "right" },
+  barMoney: { font: 4, fill: "203864", numFmt: NUM_FMT_BRL, h: "right" },
+  bold: { font: 1 },
+  boldCenter: { font: 1, h: "center" },
+  thBox: { font: 1, border: true, h: "center" },
+  legend: { fill: "D9E1F2", h: "center" },
+  legendText: { fill: "D9E1F2" },
+  legendMoney: { fill: "D9E1F2", numFmt: NUM_FMT_BRL },
+  acc: { numFmt: NUM_FMT_ACC },
+  accBold: { font: 1, numFmt: NUM_FMT_ACC },
+  dateRight: { numFmt: NUM_FMT_DATE, h: "right" },
+  right: { h: "right" },
 } satisfies Record<string, StyleDef>;
 
 export type StyleName = keyof typeof STYLES;
@@ -121,8 +137,9 @@ function stylesXml(): string {
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-    `<numFmts count="2"><numFmt numFmtId="${NUM_FMT_DATE}" formatCode="dd/mm/yyyy"/>` +
-    `<numFmt numFmtId="${NUM_FMT_BRL}" formatCode="&quot;R$&quot; #,##0.00;-&quot;R$&quot; #,##0.00"/></numFmts>` +
+    `<numFmts count="3"><numFmt numFmtId="${NUM_FMT_DATE}" formatCode="dd/mm/yyyy"/>` +
+    `<numFmt numFmtId="${NUM_FMT_BRL}" formatCode="&quot;R$&quot; #,##0.00;-&quot;R$&quot; #,##0.00"/>` +
+    `<numFmt numFmtId="${NUM_FMT_ACC}" formatCode="#,##0.00;-#,##0.00;&quot;-&quot;"/></numFmts>` +
     `<fonts count="${FONTS.length}">${FONTS.join("")}</fonts>` +
     `<fills count="${FILL_COLORS.length + 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
     `${FILL_COLORS.map(solid).join("")}</fills>` +
@@ -168,6 +185,8 @@ export interface WorkbookSheet {
   landscape?: boolean;
   /** Ajusta à largura da página em retrato. */
   fitPortrait?: boolean;
+  /** Esconde as linhas de grade (visual de formulário). */
+  hideGrid?: boolean;
 }
 
 const isStyled = (c: StyledCell | XlsxCell): c is StyledCell =>
@@ -233,7 +252,7 @@ function worksheetXml(sheet: WorkbookSheet): string {
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
     sheetPr +
     `<dimension ref="A1:${lastCol}${lastRow}"/>` +
-    `<sheetViews><sheetView workbookViewId="0">${freeze}</sheetView></sheetViews>` +
+    `<sheetViews><sheetView${sheet.hideGrid ? ` showGridLines="0"` : ""} workbookViewId="0">${freeze}</sheetView></sheetViews>` +
     widths +
     `<sheetData>${rows}</sheetData>` +
     filter +
