@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { Check, Copy, Download, FileCheck, Lock, TriangleAlert } from "lucide-react";
 import {
   emailText,
+  groupResults,
   guessReportColumns,
   guessSapColumns,
   parseDelimited,
@@ -12,6 +13,7 @@ import {
   reconcile,
   reconcileSummary,
   tableFromSheet,
+  type GroupResult,
   type PaymentState,
   type PostedStatus,
   type ReconcileRow,
@@ -192,6 +194,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
   const [sapError, setSapError] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [copied, setCopied] = useState(false);
+  const [byGroup, setByGroup] = useState(true);
 
   useEffect(() => setToday(todayISO()), []);
 
@@ -227,6 +230,9 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
     [report, sap, reportTable, sapTable, today],
   );
   const summary = useMemo(() => reconcileSummary(rows, today), [rows, today]);
+  const groups = useMemo(() => groupResults(rows, today), [rows, today]);
+  const grouped = groups.length > 0;
+  const showGroups = grouped && byGroup;
   const email = useMemo(() => (rows.length ? emailText(rows, today, formatBR) : ""), [rows, today]);
 
   const visible = rows.filter((r) =>
@@ -240,6 +246,32 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
             ? r.payment === "paid"
             : true,
   );
+
+  const isLate = (g: GroupResult) => !!g.dueDate && g.dueDate < today && g.payment !== "paid";
+  const visibleGroups = groups.filter((g) =>
+    filter === "not_posted"
+      ? g.posted !== "posted"
+      : filter === "overdue_open"
+        ? isLate(g)
+        : filter === "diff"
+          ? g.diffCount > 0
+          : filter === "paid"
+            ? g.payment === "paid"
+            : true,
+  );
+  const cards = showGroups
+    ? [
+        { k: "all" as const, label: "Faturas no relatório", value: groups.length, tone: "" },
+        { k: "not_posted" as const, label: "Faturas com doc. não lançado", value: groups.filter((g) => g.posted !== "posted").length, tone: "red" },
+        { k: "overdue_open" as const, label: "Faturas vencidas em aberto", value: groups.filter(isLate).length, tone: "red" },
+        { k: "paid" as const, label: "Faturas pagas", value: groups.filter((g) => g.payment === "paid").length, tone: "green" },
+      ]
+    : [
+        { k: "all" as const, label: "Itens no relatório", value: summary.total, tone: "" },
+        { k: "not_posted" as const, label: "Não lançados", value: summary.notPosted, tone: "red" },
+        { k: "overdue_open" as const, label: "Vencidos em aberto", value: summary.overdueOpen + summary.overdueNotPosted, tone: "red" },
+        { k: "paid" as const, label: "Vencidos já pagos", value: summary.overduePaid, tone: "green" },
+      ];
 
   const download = () => {
     if (!report || !reportTable) return;
@@ -289,6 +321,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
           onTable={(i) => report && setReport({ ...report, tableIndex: i, columns: guessReportColumns(report.tables[i].headers) })}
         >
           <ColumnSelect label="Nº da NF / documento" required value={report?.columns.doc} headers={headersR} onChange={(v) => setRC({ doc: v ?? 0 })} />
+          <ColumnSelect label="Fatura (agrupa documentos)" value={report?.columns.group} headers={headersR} onChange={(v) => setRC({ group: v })} />
           <ColumnSelect label="Fornecedor" value={report?.columns.supplier} headers={headersR} onChange={(v) => setRC({ supplier: v })} />
           <ColumnSelect label="Valor" value={report?.columns.amount} headers={headersR} onChange={(v) => setRC({ amount: v })} />
           <ColumnSelect label="Vencimento" value={report?.columns.due} headers={headersR} onChange={(v) => setRC({ due: v })} />
@@ -323,12 +356,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
       {rows.length > 0 && (
         <>
           <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {[
-              { k: "all" as const, label: "Itens no relatório", value: summary.total, tone: "" },
-              { k: "not_posted" as const, label: "Não lançados", value: summary.notPosted, tone: summary.notPosted ? "red" : "" },
-              { k: "overdue_open" as const, label: "Vencidos em aberto", value: summary.overdueOpen + summary.overdueNotPosted, tone: summary.overdueOpen + summary.overdueNotPosted ? "red" : "" },
-              { k: "paid" as const, label: "Vencidos já pagos", value: summary.overduePaid, tone: "green" },
-            ].map((c) => (
+            {cards.map((c) => (
               <button
                 key={c.k}
                 type="button"
@@ -337,7 +365,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
                 className={cx(
                   "rounded-xl border p-4 text-left transition-shadow hover:shadow-sm",
                   filter === c.k && "ring-2 ring-indigo-500",
-                  c.tone === "red"
+                  c.tone === "red" && c.value > 0
                     ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
                     : c.tone === "green"
                       ? "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
@@ -358,8 +386,31 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
               <option value="diff">Valor diferente</option>
               <option value="paid">Pagos</option>
             </select>
+            {grouped && (
+              <div role="group" aria-label="Visão" className="inline-flex rounded-lg border border-zinc-300 bg-white p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
+                {(
+                  [
+                    [true, "Por fatura"],
+                    [false, "Por documento"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={byGroup === value}
+                    onClick={() => setByGroup(value)}
+                    className={cx(
+                      "h-8 rounded-md px-3 text-sm font-medium",
+                      byGroup === value ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-400",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <span className="text-xs text-zinc-500">
-              {visible.length} de {rows.length}
+              {showGroups ? `${visibleGroups.length} de ${groups.length} faturas` : `${visible.length} de ${rows.length}`}
             </span>
             <span className="flex-1" />
             <button type="button" className={btnGhost} onClick={copyEmail}>
@@ -372,10 +423,80 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
             </button>
           </div>
 
+          {showGroups ? (
+            <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400">
+                  <tr>
+                    <th className="px-3 py-2.5 font-medium">Fatura</th>
+                    <th className="px-3 py-2.5 text-center font-medium">Docs</th>
+                    <th className="px-3 py-2.5 text-right font-medium">Total</th>
+                    <th className="px-3 py-2.5 font-medium">Vencimento</th>
+                    <th className="px-3 py-2.5 font-medium">SAP</th>
+                    <th className="px-3 py-2.5 font-medium">Pagamento</th>
+                    <th className="px-3 py-2.5 font-medium">Não lançados</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {visibleGroups.map((g) => (
+                    <tr key={g.group}>
+                      <td className="whitespace-nowrap px-3 py-2 font-medium">{g.group}</td>
+                      <td className="px-3 py-2 text-center tabular-nums">{g.count}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{brl(g.total)}</td>
+                      <td className={cx("whitespace-nowrap px-3 py-2 tabular-nums", isLate(g) && "font-semibold text-red-600 dark:text-red-400")}>
+                        {g.dueDate ? formatBR(g.dueDate) : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={cx(
+                            "whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
+                            POSTED_BADGE[g.posted === "posted" ? (g.diffCount ? "posted_diff" : "posted") : g.posted === "partial" ? "posted_diff" : "not_posted"],
+                          )}
+                        >
+                          {g.posted === "posted"
+                            ? g.diffCount
+                              ? "Lançada (valor diferente)"
+                              : "Lançada"
+                            : g.posted === "partial"
+                              ? `Parcial (${g.postedCount} de ${g.count})`
+                              : "Não lançada"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={cx(
+                            "rounded-full px-2 py-0.5 text-xs font-medium",
+                            PAYMENT_BADGE[g.payment === "partial" ? "open" : g.payment],
+                          )}
+                        >
+                          {g.payment === "paid"
+                            ? "Paga"
+                            : g.payment === "partial"
+                              ? `Parcial (${g.paidCount} de ${g.count} pagos)`
+                              : g.payment === "open_overdue"
+                                ? "Em aberto — vencida"
+                                : g.payment === "open"
+                                  ? "A vencer"
+                                  : "—"}
+                        </span>
+                      </td>
+                      <td className="max-w-xs px-3 py-2 text-xs text-zinc-500">
+                        {g.rows
+                          .filter((r) => r.posted === "not_posted")
+                          .map((r) => r.doc)
+                          .join(", ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
           <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400">
                 <tr>
+                  {grouped && <th className="px-3 py-2.5 font-medium">Fatura</th>}
                   <th className="px-3 py-2.5 font-medium">Documento</th>
                   <th className="px-3 py-2.5 font-medium">Fornecedor</th>
                   <th className="px-3 py-2.5 text-right font-medium">Valor</th>
@@ -388,6 +509,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
               <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
                 {visible.map((r) => (
                   <tr key={r.index}>
+                    {grouped && <td className="whitespace-nowrap px-3 py-2 text-zinc-500">{r.group ?? "—"}</td>}
                     <td className="whitespace-nowrap px-3 py-2 font-medium">{r.doc}</td>
                     <td className="px-3 py-2">{r.supplier ?? "—"}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{r.amount !== undefined ? brl(Math.abs(r.amount)) : "—"}</td>
@@ -411,6 +533,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
               </tbody>
             </table>
           </div>
+          )}
 
           <details className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <summary className="cursor-pointer text-sm font-semibold">Prévia do resumo para o e-mail</summary>

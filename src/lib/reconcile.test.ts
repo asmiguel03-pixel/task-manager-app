@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   docKeys,
   emailText,
+  groupResults,
   guessReportColumns,
   guessSapColumns,
   parseDelimited,
@@ -114,5 +115,61 @@ describe("cruzamento", () => {
     expect(text).toContain("• Não lançados: 1");
     expect(text).toContain("• 1004 (Delta) — R$ 150,00");
     expect(text).toContain("• 1002 (Beta) — R$ 300,00 — venceu em 08/11/2026");
+  });
+});
+
+describe("faturas com vários documentos (CT-e)", () => {
+  const today = "2026-11-11";
+  const report = tableFromSheet(
+    sheet([
+      ["FATURA", "CLIENTE", "DOCUMENTO", "VALOR", "VENCIMENTO"],
+      [900001, "Cliente X", 1001, 100, 46331], // fatura lançada CT-e a CT-e, paga
+      [900001, "Cliente X", 1002, 50, 46331],
+      [900002, "Cliente X", 2001, 70, 46346], // fatura lançada inteira (pelo nº da fatura)
+      [900002, "Cliente X", 2002, 30, 46346],
+      [900003, "Cliente X", 3001, 10, 46331], // parcial: 3002 falta
+      [900003, "Cliente X", 3002, 20, 46331],
+      [900004, "Cliente X", 4001, 40, 46330], // não lançada e vencida
+    ]),
+  )!;
+  const rc = guessReportColumns(report.headers);
+  const sap = tableFromSheet(
+    sheet([
+      ["Referência", "Nº documento", "Montante em moeda interna", "Data de compensação"],
+      ["000001001", 51, -100, 46332],
+      ["000001002", 52, -50, 46332],
+      ["FAT 900002", 53, -100, ""],
+      ["3001", 54, -10, ""],
+    ]),
+  )!;
+  const rows = reconcile(report, rc, sap, guessSapColumns(sap.headers), today);
+
+  it("reconhece FATURA como agrupador e DOCUMENTO como o CT-e", () => {
+    expect(rc).toEqual({ doc: 2, group: 0, supplier: 1, amount: 3, due: 4 });
+  });
+
+  it("acha pelo CT-e e, se não houver, pela fatura comparando o total", () => {
+    expect(rows.map((r) => [r.doc, r.posted, r.matchedBy ?? "-", r.payment])).toEqual([
+      ["1001", "posted", "doc", "paid"],
+      ["1002", "posted", "doc", "paid"],
+      ["2001", "posted", "group", "open"],
+      ["2002", "posted", "group", "open"],
+      ["3001", "posted", "doc", "open_overdue"],
+      ["3002", "not_posted", "-", "unknown"],
+      ["4001", "not_posted", "-", "unknown"],
+    ]);
+  });
+
+  it("resume por fatura", () => {
+    expect(groupResults(rows, today).map((g) => [g.group, g.count, g.total, g.posted, g.payment])).toEqual([
+      ["900001", 2, 150, "posted", "paid"],
+      ["900002", 2, 100, "posted", "open"],
+      ["900003", 2, 30, "partial", "open_overdue"],
+      ["900004", 1, 40, "not_posted", "unknown"],
+    ]);
+    const text = emailText(rows, today, br);
+    expect(text).toContain("(4 faturas, 7 documentos)");
+    expect(text).toContain("• Fatura 900004 — 1 documento — R$ 40,00 — venc. 04/11/2026");
+    expect(text).toContain("faltam: 3002");
   });
 });

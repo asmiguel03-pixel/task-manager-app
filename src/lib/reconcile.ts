@@ -137,6 +137,8 @@ export function docKeys(v: CellValue | undefined): string[] {
 
 export interface ReportColumns {
   doc: number;
+  /** Coluna que agrupa documentos (ex.: FATURA com vários CT-es). */
+  group?: number;
   supplier?: number;
   amount?: number;
   due?: number;
@@ -160,9 +162,22 @@ const find = (headers: string[], patterns: RegExp[], exclude?: RegExp) => {
 };
 
 export function guessReportColumns(headers: string[]): ReportColumns {
+  const group = find(headers, [/^fatura|n[ºo°.]?\s*(da\s+)?fatura|^duplicata/]);
+  const others = headers.map((h, i) => (i === group ? "" : h));
   return {
-    doc: find(headers, [/^(n[ºo°.]?\s*)?(da\s+)?(nf|nfe|nota)/, /nota fiscal|n\.? ?f\.?\b/, /documento|doc\b|titulo|referencia|fatura|numero|^n[ºo°]/]) ?? 0,
-    supplier: find(headers, [/fornecedor|razao|credor|beneficiario|emitente/, /^nome/]),
+    doc:
+      find(others, [
+        /^(n[ºo°.]?\s*)?(do\s+)?(ct-?e|conhecimento)/,
+        /^(n[ºo°.]?\s*)?(da\s+)?(nf|nfe|nota)/,
+        /nota fiscal|n\.? ?f\.?\b|ct-?e\b/,
+        /documento|doc\b|titulo|referencia|numero|^n[ºo°]/,
+      ]) ??
+      group ??
+      0,
+    group: group !== undefined && find(others, [/ct-?e|conhecimento|nota|nf|documento|doc\b|titulo|referencia|numero/]) !== undefined
+      ? group
+      : undefined,
+    supplier: find(headers, [/fornecedor|razao|credor|beneficiario|emitente|cliente|tomador/, /^nome/]),
     amount: find(headers, [/^valor|montante|total|saldo/]),
     due: find(headers, [/venc/]),
   };
@@ -187,6 +202,10 @@ export type PaymentState = "paid" | "open_overdue" | "open" | "unknown";
 export interface ReconcileRow {
   index: number;
   doc: string;
+  /** Valor da coluna de agrupamento (ex.: nº da fatura). */
+  group?: string;
+  /** Como foi encontrado no SAP: pelo próprio documento ou pelo agrupador. */
+  matchedBy?: "doc" | "group";
   supplier?: string;
   amount?: number;
   dueDate?: string;
@@ -214,6 +233,26 @@ export function reconcile(
       for (const k of docKeys(row[col])) index.set(k, [...(index.get(k) ?? []), i]);
     }
   });
+  const lookup = (keys: string[]) => [...new Set(keys.flatMap((k) => index.get(k) ?? []))].map((j) => sap.rows[j]);
+
+  const groupOf = (row: (CellValue | undefined)[]) => {
+    const v = rc.group !== undefined ? row[rc.group] : undefined;
+    return v === undefined || String(v).trim() === "" ? undefined : String(v).trim();
+  };
+  // Soma dos documentos de cada grupo (ex.: total da fatura = soma dos CT-es).
+  const groupTotals = new Map<string, number>();
+  if (rc.group !== undefined && rc.amount !== undefined) {
+    for (const row of report.rows) {
+      const g = groupOf(row);
+      const a = toAmount(row[rc.amount]);
+      if (g && a !== undefined && docKeys(row[rc.doc]).length) groupTotals.set(g, (groupTotals.get(g) ?? 0) + a);
+    }
+  }
+
+  const sapAmountOf = (r: (CellValue | undefined)[]) => (sc.amount !== undefined ? toAmount(r[sc.amount]) : undefined);
+  const cleared = (r: (CellValue | undefined)[]) =>
+    (sc.clearingDate !== undefined && !!toDate(r[sc.clearingDate])) ||
+    (sc.clearingDoc !== undefined && docKeys(r[sc.clearingDoc]).length > 0);
 
   return report.rows.flatMap((row, i): ReconcileRow[] => {
     const docCell = row[rc.doc];
@@ -222,39 +261,48 @@ export function reconcile(
     const amount = rc.amount !== undefined ? toAmount(row[rc.amount]) : undefined;
     const supplier = rc.supplier !== undefined && row[rc.supplier] !== undefined ? String(row[rc.supplier]).trim() : undefined;
     const reportDue = rc.due !== undefined ? toDate(row[rc.due]) : undefined;
+    const group = groupOf(row);
 
-    const candidates = [...new Set(keys.flatMap((k) => index.get(k) ?? []))].map((j) => sap.rows[j]);
-    const sapAmountOf = (r: (CellValue | undefined)[]) => (sc.amount !== undefined ? toAmount(r[sc.amount]) : undefined);
+    // 1º pelo próprio documento; se não achar, pelo agrupador (fatura lançada inteira).
+    let matchedBy: "doc" | "group" = "doc";
+    let candidates = lookup(keys);
+    let expected = amount;
+    if (!candidates.length && group) {
+      const byGroup = lookup(docKeys(group));
+      if (byGroup.length) {
+        candidates = byGroup;
+        matchedBy = "group";
+        expected = groupTotals.get(group) ?? amount;
+      }
+    }
+
     const sameAmount = (r: (CellValue | undefined)[]) => {
       const a = sapAmountOf(r);
-      return amount !== undefined && a !== undefined && Math.abs(Math.abs(a) - Math.abs(amount)) <= AMOUNT_TOLERANCE;
+      return expected !== undefined && a !== undefined && Math.abs(Math.abs(a) - Math.abs(expected)) <= AMOUNT_TOLERANCE;
     };
     // Prefere a linha com o mesmo valor; depois a já compensada.
-    const cleared = (r: (CellValue | undefined)[]) =>
-      (sc.clearingDate !== undefined && !!toDate(r[sc.clearingDate])) ||
-      (sc.clearingDoc !== undefined && docKeys(r[sc.clearingDoc]).length > 0);
     const match =
       candidates.find((r) => sameAmount(r) && cleared(r)) ??
       candidates.find(sameAmount) ??
       candidates.find(cleared) ??
       candidates[0];
 
-    const base = { index: i, doc: String(docCell).trim(), supplier, amount };
+    const base = { index: i, doc: String(docCell).trim(), group, supplier, amount };
     if (!match) {
       const overdue = !!reportDue && reportDue < today;
       return [
         {
           ...base,
           dueDate: reportDue,
-          posted: "not_posted" as const,
-          payment: "unknown" as const,
+          posted: "not_posted",
+          payment: "unknown",
           note: overdue ? "Não encontrado no SAP — e já venceu" : "Não encontrado no SAP",
         },
       ];
     }
 
     const sapAmount = sapAmountOf(match);
-    const diff = amount !== undefined && sapAmount !== undefined && !sameAmount(match);
+    const diff = expected !== undefined && sapAmount !== undefined && !sameAmount(match);
     const dueDate = reportDue ?? (sc.due !== undefined ? toDate(match[sc.due]) : undefined);
     const clearingDate = sc.clearingDate !== undefined ? toDate(match[sc.clearingDate]) : undefined;
     const canTell = sc.clearingDate !== undefined || sc.clearingDoc !== undefined;
@@ -268,13 +316,15 @@ export function reconcile(
           : "open";
 
     const notes: string[] = [];
-    if (diff) notes.push("Valor diferente no SAP");
+    if (matchedBy === "group") notes.push(`Lançado pela fatura ${group}`);
+    if (diff) notes.push(matchedBy === "group" ? "Total da fatura diferente no SAP" : "Valor diferente no SAP");
     if (candidates.length > 1) notes.push(`${candidates.length} lançamentos com esse número no SAP`);
     return [
       {
         ...base,
+        matchedBy,
         dueDate,
-        posted: diff ? ("posted_diff" as const) : ("posted" as const),
+        posted: diff ? "posted_diff" : "posted",
         sapAmount,
         sapDoc: sc.doc2 !== undefined && match[sc.doc2] !== undefined ? String(match[sc.doc2]) : undefined,
         payment,
@@ -282,6 +332,53 @@ export function reconcile(
         note: notes.join(" · "),
       },
     ];
+  });
+}
+
+// ---------- Visão por grupo (fatura) ----------
+
+export interface GroupResult {
+  group: string;
+  count: number;
+  total: number;
+  dueDate?: string;
+  postedCount: number;
+  diffCount: number;
+  paidCount: number;
+  posted: "posted" | "partial" | "not_posted";
+  payment: "paid" | "partial" | "open_overdue" | "open" | "unknown";
+  rows: ReconcileRow[];
+}
+
+export function groupResults(rows: ReconcileRow[], today: string): GroupResult[] {
+  const map = new Map<string, ReconcileRow[]>();
+  for (const r of rows) if (r.group) map.set(r.group, [...(map.get(r.group) ?? []), r]);
+  return [...map].map(([group, list]) => {
+    const postedCount = list.filter((r) => r.posted !== "not_posted").length;
+    const paidCount = list.filter((r) => r.payment === "paid").length;
+    const dueDate = list.map((r) => r.dueDate).filter(Boolean).sort()[0];
+    const unknown = list.every((r) => r.payment === "unknown");
+    return {
+      group,
+      count: list.length,
+      total: Math.round(list.reduce((s, r) => s + Math.abs(r.amount ?? 0), 0) * 100) / 100,
+      dueDate,
+      postedCount,
+      diffCount: list.filter((r) => r.posted === "posted_diff").length,
+      paidCount,
+      posted: postedCount === list.length ? "posted" : postedCount ? "partial" : "not_posted",
+      payment:
+        paidCount === list.length
+          ? "paid"
+          : paidCount
+            ? "partial"
+            : unknown
+              ? "unknown"
+              : dueDate && dueDate < today
+                ? "open_overdue"
+                : "open",
+      rows: list,
+    };
   });
 }
 
@@ -320,6 +417,7 @@ export function reconcileSummary(rows: ReconcileRow[], today: string) {
 
 /** Texto curto para responder o e-mail; a planilha vai anexada com os detalhes. */
 export function emailText(rows: ReconcileRow[], today: string, formatDate: (iso: string) => string): string {
+  if (rows.some((r) => r.group)) return groupEmailText(rows, today, formatDate);
   const s = reconcileSummary(rows, today);
   const money = (n?: number) =>
     n === undefined
@@ -343,6 +441,42 @@ export function emailText(rows: ReconcileRow[], today: string, formatDate: (iso:
   if (diff.length) {
     parts.push("", "Lançados com valor diferente:", ...diff.map((r) => `${line(r)} — no SAP${money(r.sapAmount)}`));
   }
+  parts.push("", "O detalhe item a item está na planilha em anexo.");
+  return parts.join("\n");
+}
+
+/** Resumo por fatura (quando o relatório agrupa documentos). */
+function groupEmailText(rows: ReconcileRow[], today: string, formatDate: (iso: string) => string): string {
+  const groups = groupResults(rows, today);
+  const money = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }).replace(/\s/g, " ");
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const line = (g: GroupResult) =>
+    `• Fatura ${g.group} — ${plural(g.count, "documento", "documentos")} — ${money(g.total)}${g.dueDate ? ` — venc. ${formatDate(g.dueDate)}` : ""}`;
+  const overdue = groups.filter((g) => g.dueDate && g.dueDate < today);
+  const notPosted = groups.filter((g) => g.posted === "not_posted");
+  const partial = groups.filter((g) => g.posted === "partial");
+  const open = overdue.filter((g) => g.posted !== "not_posted" && g.payment !== "paid");
+
+  const parts = [
+    `Segue a análise do relatório (${plural(groups.length, "fatura", "faturas")}, ${plural(rows.length, "documento", "documentos")}), conferida no SAP em ${formatDate(today)}:`,
+    "",
+    `• Faturas lançadas: ${groups.filter((g) => g.posted === "posted").length}${partial.length ? ` (+ ${partial.length} parcialmente)` : ""}`,
+    `• Faturas não lançadas: ${notPosted.length}`,
+    `• Vencidas: ${overdue.length} (pagas: ${overdue.filter((g) => g.payment === "paid").length}; em aberto: ${open.length}; não lançadas: ${overdue.filter((g) => g.posted === "not_posted").length})`,
+  ];
+  if (notPosted.length) parts.push("", "Faturas não lançadas:", ...notPosted.map(line));
+  if (partial.length) {
+    parts.push(
+      "",
+      "Faturas lançadas em parte (documentos que faltam no SAP):",
+      ...partial.map(
+        (g) => `${line(g)} — faltam: ${g.rows.filter((r) => r.posted === "not_posted").map((r) => r.doc).join(", ")}`,
+      ),
+    );
+  }
+  if (open.length) parts.push("", "Vencidas e ainda em aberto:", ...open.map(line));
+  const diff = groups.filter((g) => g.diffCount > 0);
+  if (diff.length) parts.push("", "Com valor diferente no SAP:", ...diff.map(line));
   parts.push("", "O detalhe item a item está na planilha em anexo.");
   return parts.join("\n");
 }
