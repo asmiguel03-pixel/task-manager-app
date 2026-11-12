@@ -208,9 +208,9 @@ export function guessSapColumns(headers: string[]): SapColumns {
       find(headers, [/nota|nf/], /compens|clearing|filial|serie|fornec/) ??
       0,
     doc2: find(headers, [/n[ºo°.]?\s*doc|^documento|^journal entry$/, /^nf entrada|^nf\b|^nota fiscal/, /atribuic|^assignment/], /compens|clearing|refer|date|data|filial|serie/),
-    name: find(headers, [/supplier name|nome (do )?fornecedor|^nome|razao social|^fornecedor$/]),
+    name: find(headers, [/supplier name|nome (do )?fornecedor|razao social|beneficiario/, /^nome/, /^fornecedor$/]),
     taxId: find(headers, [/cnpj|cpf|tax number/]),
-    amount: find(headers, [/montante.*(interna|mi\b)|montante|^amount/, /^valor (em )?aberto/, /^a pagar/, /^valor/], /desc|juros|multa|ctrl|red\./),
+    amount: find(headers, [/montante.*(interna|mi\b)|montante|^amount/, /^valor (em )?aberto/, /^a pagar/, /^valor/, /^total$/], /desc|juros|multa|ctrl|red\./),
     due: find(headers, [/net due|venc|due date/]),
     clearingDate: find(headers, [/data.*compens|compens.*data|clearing date/]),
     clearingDoc: find(headers, [/doc.*compens|compens.*doc|clearing (journal|doc|entry)/]),

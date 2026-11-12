@@ -22,6 +22,8 @@ import {
   type Table,
 } from "@/lib/reconcile";
 import { exportReconcileXlsx } from "@/lib/reconcile-export";
+import { checkDda, countStatuses, systemNameFromFile, type DdaColumns, type DdaStatusKind } from "@/lib/dda-check";
+import { exportDdaXlsx } from "@/lib/dda-export";
 import { todayISO } from "@/lib/task-domain";
 import { formatBR } from "@/lib/work-tools";
 import { readXlsx, type ReadSheet } from "@/lib/xlsx-read";
@@ -186,6 +188,17 @@ export function SourceCard<C extends object>({
   );
 }
 
+const STATUS_BG: Record<DdaStatusKind, string> = {
+  ok: "bg-[#C6EFCE]",
+  business_day: "bg-[#E2F0D9]",
+  grouped: "bg-[#DDEBF7]",
+  diverge_date: "bg-[#FFC7CE]",
+  diverge_value: "bg-[#FFC7CE]",
+  check: "bg-[#FCE4D6]",
+  missing: "bg-[#FFEB9C]",
+  outside: "bg-[#EDEDED]",
+};
+
 export function ReconcileView({ toast }: { toast: (message: string, kind?: "success" | "info" | "error") => void }) {
   const [today, setToday] = useState("");
   const [report, setReport] = useState<Source<ReportColumns> | null>(null);
@@ -230,6 +243,36 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
     [report, sap, reportTable, sapTable, today],
   );
   const summary = useMemo(() => reconcileSummary(rows, today), [rows, today]);
+
+  // Conferência DDA × sistema: quando os dois lados têm CNPJ e valor.
+  const [sysNameEdit, setSysNameEdit] = useState<string | null>(null);
+  const sysName = (sysNameEdit ?? (sap ? systemNameFromFile(sap.fileName) : "SISTEMA")).trim().toUpperCase() || "SISTEMA";
+  const ddaCols: DdaColumns | undefined =
+    report && report.columns.taxId !== undefined && report.columns.amount !== undefined
+      ? { doc: report.columns.doc, taxId: report.columns.taxId, amount: report.columns.amount, due: report.columns.due, supplier: report.columns.supplier }
+      : undefined;
+  const sysCols: DdaColumns | undefined =
+    sap && sap.columns.taxId !== undefined && sap.columns.amount !== undefined
+      ? { doc: sap.columns.doc, taxId: sap.columns.taxId, amount: sap.columns.amount, due: sap.columns.due, supplier: sap.columns.name }
+      : undefined;
+  const ddaKey = JSON.stringify([ddaCols, sysCols]);
+  const ddaCheck = useMemo(() => {
+    const [dc, sc] = JSON.parse(ddaKey) as [DdaColumns | undefined, DdaColumns | undefined];
+    return reportTable && sapTable && dc && sc ? checkDda(reportTable, dc, sapTable, sc, sysName) : undefined;
+  }, [reportTable, sapTable, ddaKey, sysName]);
+  const downloadDda = () => {
+    if (!ddaCheck || !reportTable || !sapTable || !ddaCols || !sysCols) return;
+    const blob = new Blob([exportDdaXlsx(reportTable, ddaCols, sapTable, sysCols, ddaCheck, sysName) as BlobPart], { type: XLSX_MIME });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Conferencia DDA x ${sysName.toLowerCase()} - ${formatBR(today).replace(/\//g, "-")}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Planilhas com status baixadas", "success");
+  };
   const groups = useMemo(() => groupResults(rows, today), [rows, today]);
   const grouped = groups.length > 0;
   const showGroups = grouped && byGroup;
@@ -347,7 +390,53 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
         </SourceCard>
       </div>
 
-      {sap && sap.columns.clearingDate === undefined && sap.columns.clearingDoc === undefined && (
+      {ddaCheck && (
+        <section className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Status de cada linha (boletos × títulos)</h2>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                Cruza por CNPJ, nº, valor e vencimento, e marca as duas planilhas com o status.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-1 text-xs text-zinc-500">
+                Nome do sistema
+                <input className={cx(inputCls, "w-36")} value={sysNameEdit ?? sysName} onChange={(e) => setSysNameEdit(e.target.value)} />
+              </label>
+              <button type="button" className={btnPrimary} onClick={downloadDda}>
+                <Download className="size-4" aria-hidden />
+                Baixar planilhas com status
+              </button>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {(
+              [
+                [`Relatório recebido (${report?.fileName ?? ""})`, ddaCheck.dda],
+                [`Sistema (${sap?.fileName ?? ""})`, ddaCheck.system],
+              ] as const
+            ).map(([title, list]) => {
+              const kinds = new Map<string, DdaStatusKind>();
+              for (const x of list) if (x) kinds.set(x.label, x.kind);
+              return (
+                <div key={title}>
+                  <p className="mb-1.5 truncate text-xs font-medium text-zinc-500">{title}</p>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {[...countStatuses(list).entries()].map(([label, n]) => (
+                      <li key={label} className={cx("rounded-md px-2 py-1 text-xs font-medium text-zinc-900", STATUS_BG[kinds.get(label) ?? "ok"])}>
+                        {label}: <span className="tabular-nums">{n}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {!ddaCheck && sap && sap.columns.clearingDate === undefined && sap.columns.clearingDoc === undefined && (
         <p className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
           Sem coluna de compensação o app só diz se está lançado, não se já foi pago. Se a extração for do SAP (FBL1N), marque

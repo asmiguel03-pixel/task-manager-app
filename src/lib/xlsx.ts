@@ -61,7 +61,7 @@ const FONTS = [
 
 const solid = (rgb: string) =>
   `<fill><patternFill patternType="solid"><fgColor rgb="FF${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
-const FILL_COLORS = ["E0E7FF", "1E293B", "334155", "DCFCE7", "DBEAFE", "FEF3C7", "FFEDD5", "F1F5F9", "FEE2E2", "203864", "D9E1F2"] as const;
+const FILL_COLORS = ["E0E7FF", "1E293B", "334155", "DCFCE7", "DBEAFE", "FEF3C7", "FFEDD5", "F1F5F9", "FEE2E2", "203864", "D9E1F2", "C6EFCE", "E2F0D9", "DDEBF7", "FFC7CE", "FCE4D6", "FFEB9C", "EDEDED", "A6A6A6"] as const;
 const fillId = (rgb: (typeof FILL_COLORS)[number]) => FILL_COLORS.indexOf(rgb) + 2;
 
 const NUM_FMT_DATE = 164;
@@ -113,6 +113,18 @@ const STYLES = {
   accBold: { font: 1, numFmt: NUM_FMT_ACC },
   dateRight: { numFmt: NUM_FMT_DATE, h: "right" },
   right: { h: "right" },
+  // Conferência DDA × sistema (mesmas cores da planilha feita à mão).
+  thGray: { font: 1, fill: "A6A6A6", border: true },
+  cell: { border: true },
+  cellMoney: { border: true, numFmt: NUM_FMT_BRL },
+  cellDate: { border: true, numFmt: NUM_FMT_DATE },
+  stOk: { border: true, fill: "C6EFCE" },
+  stBusinessDay: { border: true, fill: "E2F0D9" },
+  stGrouped: { border: true, fill: "DDEBF7" },
+  stDiverge: { border: true, fill: "FFC7CE" },
+  stCheck: { border: true, fill: "FCE4D6" },
+  stMissing: { border: true, fill: "FFEB9C" },
+  stOutside: { border: true, fill: "EDEDED" },
 } satisfies Record<string, StyleDef>;
 
 export type StyleName = keyof typeof STYLES;
