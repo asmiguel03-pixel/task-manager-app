@@ -15,7 +15,7 @@ const STATUS_STYLE: Record<DdaStatusKind, StyleName> = {
   outside: "stOutside",
 };
 
-const DATE_HEADER = /venc|emiss|^data|entrada$|pgto|negociada/i;
+const DATE_HEADER = /venc|vcto|emiss|^data|entrada$|pgto|negociada/i;
 
 /**
  * Mesma planilha recebida, com as colunas principais primeiro e a coluna de status
