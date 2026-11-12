@@ -18,14 +18,13 @@ const STATUS_STYLE: Record<DdaStatusKind, StyleName> = {
 const DATE_HEADER = /venc|vcto|emiss|^data|entrada$|pgto|negociada/i;
 
 /**
- * Mesma planilha recebida, com as colunas principais primeiro e a coluna de status
- * logo depois (como na conferência feita à mão).
+ * Mesma planilha recebida, na mesma ordem de colunas, com a coluna de status
+ * logo depois da coluna de valor (como na conferência feita à mão).
  */
 function sheetWithStatus(name: string, t: Table, c: DdaColumns, statuses: (DdaStatus | undefined)[]): WorkbookSheet {
-  const front = [c.supplier, c.taxId, c.due, c.doc, c.amount].filter((i): i is number => i !== undefined);
-  const uniqueFront = [...new Set(front)];
-  const rest = t.headers.map((_, i) => i).filter((i) => !uniqueFront.includes(i));
-  const order = [...uniqueFront, -1, ...rest];
+  const all = t.headers.map((_, i) => i);
+  const at = all.indexOf(c.amount) + 1;
+  const order = [...all.slice(0, at), -1, ...all.slice(at)];
   const dateCols = new Set(t.headers.map((h, i) => (i === c.due || DATE_HEADER.test(h) ? i : -1)).filter((i) => i >= 0));
 
   const cell = (v: CellValue | undefined, i: number): StyledCell => {

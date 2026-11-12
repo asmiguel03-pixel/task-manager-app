@@ -58,7 +58,8 @@ describe("conferência DDA × sistema", () => {
     const sheets = await readXlsx(exportDdaXlsx(dda, dc, sys, sc, r, "SÊNIOR"));
     expect(sheets.map((s) => s.name)).toEqual(["Resumo", "Boletos DDA", "Sênior"]);
     expect([...sheets[1].rows.get(1)!.values()].slice(0, 6)).toEqual(["Beneficiário", "CPF/CNPJ", "Venc.", "Nº Doc.", "A Pagar", "Status"]);
-    expect(sheets[2].rows.get(2)?.get(2)).toBe(46342); // vencimento vira data
+    expect([...sheets[2].rows.get(1)!.values()]).toEqual(["Fornecedor", "CNPJ/CPF", "Nome Fornecedor", "Título", "Total", "Status", "Vencimento"]);
+    expect(sheets[2].rows.get(2)?.get(6)).toBe(46342); // vencimento vira data
   });
 
   it("ajudantes", () => {
