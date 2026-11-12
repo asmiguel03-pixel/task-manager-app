@@ -152,6 +152,8 @@ export interface ReportColumns {
   /** Coluna que agrupa documentos (ex.: FATURA com vários CT-es). */
   group?: number;
   supplier?: number;
+  /** CNPJ/CPF do fornecedor ou beneficiário. */
+  taxId?: number;
   amount?: number;
   due?: number;
 }
@@ -161,6 +163,7 @@ export interface SapColumns {
   /** Nome do fornecedor (para achar lançamentos sem nº de título). */
   name?: number;
   doc2?: number;
+  taxId?: number;
   amount?: number;
   due?: number;
   clearingDate?: number;
@@ -191,18 +194,23 @@ export function guessReportColumns(headers: string[]): ReportColumns {
     group: group !== undefined && find(others, [/ct-?e|conhecimento|nota|nf|documento|doc\b|titulo|referencia|numero/]) !== undefined
       ? group
       : undefined,
-    supplier: find(headers, [/fornecedor|razao|credor|beneficiario|emitente|cliente|tomador/, /^nome/]),
-    amount: find(headers, [/^valor|montante|total|saldo/]),
+    supplier: find(headers, [/nome (do )?fornecedor|razao|beneficiario|credor|emitente/, /fornecedor|cliente|tomador/, /^nome/], /fatura|imposto|nf ent/),
+    taxId: find(headers, [/cnpj|cpf|tax number/]),
+    amount: find(headers, [/^valor (em )?aberto|^a pagar|^valor|montante|total|saldo/], /desc|juros|multa|ctrl/),
     due: find(headers, [/venc/]),
   };
 }
 
 export function guessSapColumns(headers: string[]): SapColumns {
   return {
-    doc: find(headers, [/^referencia|^refer|^reference/, /nota|nf/, /n[ºo°.]?\s*doc|documento|^journal entry$/], /compens|clearing/) ?? 0,
-    doc2: find(headers, [/n[ºo°.]?\s*doc|^documento|^journal entry$/, /atribuic|^assignment/], /compens|clearing|refer|date|data/),
-    name: find(headers, [/supplier name|nome do fornecedor|^nome|razao social|^fornecedor$/]),
-    amount: find(headers, [/montante.*(interna|mi\b)|montante|^amount/, /^valor/]),
+    doc:
+      find(headers, [/^referencia|^refer|^reference/, /^titulo$/, /^(nº |n )?nota|^nf\b/, /n[ºo°.]?\s*doc|documento|^journal entry$/], /compens|clearing|imposto/) ??
+      find(headers, [/nota|nf/], /compens|clearing|filial|serie|fornec/) ??
+      0,
+    doc2: find(headers, [/n[ºo°.]?\s*doc|^documento|^journal entry$/, /^nf entrada|^nf\b|^nota fiscal/, /atribuic|^assignment/], /compens|clearing|refer|date|data|filial|serie/),
+    name: find(headers, [/supplier name|nome (do )?fornecedor|^nome|razao social|^fornecedor$/]),
+    taxId: find(headers, [/cnpj|cpf|tax number/]),
+    amount: find(headers, [/montante.*(interna|mi\b)|montante|^amount/, /^valor (em )?aberto/, /^a pagar/, /^valor/], /desc|juros|multa|ctrl|red\./),
     due: find(headers, [/net due|venc|due date/]),
     clearingDate: find(headers, [/data.*compens|compens.*data|clearing date/]),
     clearingDoc: find(headers, [/doc.*compens|compens.*doc|clearing (journal|doc|entry)/]),
@@ -249,6 +257,19 @@ export function reconcile(
     }
   });
   const lookup = (keys: string[]) => [...new Set(keys.flatMap((k) => index.get(k) ?? []))].map((j) => sap.rows[j]);
+  // CNPJ: compara a raiz (8 dígitos), para aceitar matriz e filial; CPF inteiro.
+  const taxKey = (v: CellValue | undefined) => {
+    const d = v === undefined ? "" : String(v).replace(/\D/g, "");
+    if (d.length >= 12) return d.padStart(14, "0").slice(0, 8);
+    return d.length >= 9 ? d.padStart(11, "0") : "";
+  };
+  const byTax = new Map<string, number[]>();
+  if (sc.taxId !== undefined) {
+    sap.rows.forEach((row, i) => {
+      const k = taxKey(row[sc.taxId!]);
+      if (k) byTax.set(k, [...(byTax.get(k) ?? []), i]);
+    });
+  }
 
   const groupOf = (row: (CellValue | undefined)[]) => {
     const v = rc.group !== undefined ? row[rc.group] : undefined;
@@ -277,13 +298,16 @@ export function reconcile(
     const supplier = rc.supplier !== undefined && row[rc.supplier] !== undefined ? String(row[rc.supplier]).trim() : undefined;
     const reportDue = rc.due !== undefined ? toDate(row[rc.due]) : undefined;
     const group = groupOf(row);
+    const tax = rc.taxId !== undefined && sc.taxId !== undefined ? taxKey(row[rc.taxId]) : "";
+    // Com CNPJ dos dois lados, só vale lançamento do mesmo fornecedor (evita nº curto de outro fornecedor).
+    const sameTax = (r: (CellValue | undefined)[]) => !tax || !taxKey(r[sc.taxId!]) || taxKey(r[sc.taxId!]) === tax;
 
     // 1º pelo próprio documento; se não achar, pelo agrupador (fatura lançada inteira).
     let matchedBy: "doc" | "group" = "doc";
-    let candidates = lookup(keys);
+    let candidates = lookup(keys).filter(sameTax);
     let expected = amount;
     if (!candidates.length && group) {
-      const byGroup = lookup(docKeys(group));
+      const byGroup = lookup(docKeys(group)).filter(sameTax);
       if (byGroup.length) {
         candidates = byGroup;
         matchedBy = "group";
@@ -295,6 +319,14 @@ export function reconcile(
       const a = sapAmountOf(r);
       return expected !== undefined && a !== undefined && Math.abs(Math.abs(a) - Math.abs(expected)) <= AMOUNT_TOLERANCE;
     };
+    // Sem o número: mesmo CNPJ e mesmo valor (de preferência o mesmo vencimento).
+    let matchedByTax = false;
+    if (!candidates.length && tax && expected !== undefined) {
+      const same = (byTax.get(tax) ?? []).map((j) => sap.rows[j]).filter(sameAmount);
+      const sameDue = same.filter((r) => reportDue && sc.due !== undefined && toDate(r[sc.due]) === reportDue);
+      candidates = sameDue.length ? sameDue : same;
+      matchedByTax = candidates.length > 0;
+    }
     // Prefere a linha com o mesmo valor; depois a já compensada.
     const match =
       candidates.find((r) => sameAmount(r) && cleared(r)) ??
@@ -332,8 +364,10 @@ export function reconcile(
 
     const notes: string[] = [];
     if (matchedBy === "group") notes.push(`Lançado pela fatura ${group}`);
+    if (matchedByTax) notes.push("Achado pelo CNPJ e valor (nº diferente)");
     if (diff) notes.push(matchedBy === "group" ? "Total da fatura diferente no SAP" : "Valor diferente no SAP");
-    if (candidates.length > 1) notes.push(`${candidates.length} lançamentos com esse número no SAP`);
+    if (candidates.length > 1)
+      notes.push(matchedByTax ? `${candidates.length} lançamentos desse CNPJ com esse valor` : `${candidates.length} lançamentos com esse número no SAP`);
     return [
       {
         ...base,

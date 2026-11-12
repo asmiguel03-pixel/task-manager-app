@@ -22,7 +22,8 @@ async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
 
 async function unzip(
   bytes: Uint8Array,
-  wanted: RegExp = /^(xl\/(workbook\.xml|sharedStrings\.xml|worksheets\/[^/]+\.xml|_rels\/workbook\.xml\.rels))$/,
+  // Abas em xl/worksheets/ ou soltas em xl/ (exportações do SAP gravam assim).
+  wanted: RegExp = /^(xl\/(workbook\.xml|sharedStrings\.xml|worksheets\/[^/]+\.xml|(?!styles)[^/]+\.xml|_rels\/workbook\.xml\.rels))$/,
 ): Promise<Map<string, Uint8Array>> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
@@ -46,7 +47,8 @@ async function unzip(
     const extraLen = view.getUint16(pos + 30, true);
     const commentLen = view.getUint16(pos + 32, true);
     const local = view.getUint32(pos + 42, true);
-    const name = dec.decode(bytes.subarray(pos + 46, pos + 46 + nameLen));
+    // Alguns sistemas (ex.: exportação do SAP) gravam o caminho com "\\".
+    const name = dec.decode(bytes.subarray(pos + 46, pos + 46 + nameLen)).replace(/\\/g, "/");
     pos += 46 + nameLen + extraLen + commentLen;
 
     if (!wanted.test(name)) continue;
@@ -78,7 +80,14 @@ const attr = (tag: string, name: string) => {
 
 /** Junta os trechos <t> de um <si>/<is> (texto com formatação vem em vários <r>). */
 const textRuns = (xml: string) =>
-  [...xml.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>|<t(?:\s[^>]*)?\/>/g)].map((m) => decodeXml(m[1] ?? "")).join("");
+  [...xml.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>|<t(?:\s[^>]*)?\/>/g)]
+    .map((m) => {
+      const raw = m[1] ?? "";
+      // Alguns sistemas gravam o texto como <![CDATA[...]]> (sem escapar nada).
+      const cdata = /^<!\[CDATA\[([\s\S]*?)\]\]>$/.exec(raw.trim());
+      return cdata ? cdata[1] : decodeXml(raw);
+    })
+    .join("");
 
 function columnIndex(ref: string): number {
   const letters = /^[A-Z]+/.exec(ref)?.[0] ?? "A";
@@ -104,7 +113,7 @@ function parseSheet(xml: string, shared: string[]): ReadSheet["rows"] {
       else if (type === "str" || type === "e") value = v !== undefined ? decodeXml(v) : undefined;
       else if (type === "b") value = v === "1";
       else if (v !== undefined && v !== "") value = Number(v);
-      if (value !== undefined && value !== "" && !(typeof value === "number" && Number.isNaN(value))) {
+      if (value !== undefined && !(typeof value === "string" && !value.trim()) && !(typeof value === "number" && Number.isNaN(value))) {
         cells.set(columnIndex(ref), value);
       }
     }

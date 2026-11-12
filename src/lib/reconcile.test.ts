@@ -177,3 +177,25 @@ describe("faturas com vários documentos (CT-e)", () => {
     expect(text).toContain("faltam: 3002");
   });
 });
+
+describe("CNPJ", () => {
+  const t = (headers: string[], rows: (string | number)[][]) => ({ name: "x", headerRow: 1, headers, rows });
+  it("acha pelo CNPJ e valor quando o nº não bate, e não aceita nº igual de outro CNPJ", () => {
+    const report = t(["Beneficiário", "CPF/CNPJ", "Venc.", "Nº Doc.", "A Pagar"], [
+      ["FORNECEDOR A", "11.222.333/0001-81", "14/11/2026", "170-03", 1833],
+      ["FORNECEDOR B", "44.555.666/0001-99", "15/11/2026", "999", 50],
+    ]);
+    const sap = t(["Título", "CNPJ/CPF", "Nome Fornecedor", "Valor Aberto", "Vencimento", "NF Entrada"], [
+      ["5551/A", "11222333000270", "FORNECEDOR A", 1833, "14/11/2026", 8888],
+      ["999", "77888999000100", "OUTRO", 50, "15/11/2026", 1],
+    ]);
+    const rc = guessReportColumns(report.headers);
+    const sc = guessSapColumns(sap.headers);
+    expect(rc.taxId).toBe(1);
+    expect(sc.taxId).toBe(1);
+    const rows = reconcile(report, rc, sap, sc, "2026-11-12");
+    expect(rows[0].posted).toBe("posted");
+    expect(rows[0].note).toContain("CNPJ");
+    expect(rows[1].posted).toBe("not_posted");
+  });
+});

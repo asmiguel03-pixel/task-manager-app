@@ -323,6 +323,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
           <ColumnSelect label="Nº da NF / documento" required value={report?.columns.doc} headers={headersR} onChange={(v) => setRC({ doc: v ?? 0 })} />
           <ColumnSelect label="Fatura (agrupa documentos)" value={report?.columns.group} headers={headersR} onChange={(v) => setRC({ group: v })} />
           <ColumnSelect label="Fornecedor" value={report?.columns.supplier} headers={headersR} onChange={(v) => setRC({ supplier: v })} />
+          <ColumnSelect label="CNPJ / CPF" value={report?.columns.taxId} headers={headersR} onChange={(v) => setRC({ taxId: v })} />
           <ColumnSelect label="Valor" value={report?.columns.amount} headers={headersR} onChange={(v) => setRC({ amount: v })} />
           <ColumnSelect label="Vencimento" value={report?.columns.due} headers={headersR} onChange={(v) => setRC({ due: v })} />
         </SourceCard>
@@ -338,6 +339,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
         >
           <ColumnSelect label="Referência / Nº NF" required value={sap?.columns.doc} headers={headersS} onChange={(v) => setSC({ doc: v ?? 0 })} />
           <ColumnSelect label="Outro nº (ex.: Nº documento)" value={sap?.columns.doc2} headers={headersS} onChange={(v) => setSC({ doc2: v })} />
+          <ColumnSelect label="CNPJ / CPF" value={sap?.columns.taxId} headers={headersS} onChange={(v) => setSC({ taxId: v })} />
           <ColumnSelect label="Montante" value={sap?.columns.amount} headers={headersS} onChange={(v) => setSC({ amount: v })} />
           <ColumnSelect label="Vencimento" value={sap?.columns.due} headers={headersS} onChange={(v) => setSC({ due: v })} />
           <ColumnSelect label="Data de compensação" value={sap?.columns.clearingDate} headers={headersS} onChange={(v) => setSC({ clearingDate: v })} />
