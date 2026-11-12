@@ -66,7 +66,23 @@ describe("conferência DDA × sistema", () => {
     expect(taxRoot("11.111.111/0002-90")).toBe("11111111");
     expect(docMatch("NF 226", "2026226-01")).toBe(true);
     expect(docMatch("12", "2026212")).toBe(false);
+    expect(docMatch("FADEZ2026", "112026F01")).toBe(false); // ano solto não casa pelo final
     expect(systemNameFromFile("Planilha Sênior 11.xlsx")).toBe("SÊNIOR");
     expect(systemNameFromFile("Em aberto.xlsx")).toBe("SISTEMA");
+  });
+});
+
+describe("mesmo fornecedor com boletos mensais", () => {
+  it("pareia pelo valor e data exatos em vez de um nº parecido de outro mês", () => {
+    const d = t(["Beneficiário", "CPF/CNPJ", "Venc.", "Nº Doc.", "A Pagar"], [
+      ["SIND", "77.777.777/0001-77", "25/11/2026", "FANOV26", 167.3],
+      ["SIND", "77.777.777/0001-77", "25/12/2026", "FADEZ2026", 167.3],
+    ]);
+    const s = t(["Fornecedor", "CNPJ/CPF", "Nome Fornecedor", "Título", "Total", "Vencimento"], [
+      [7, "77777777000177", "SIND", "112026F01", 167.3, "25/11/2026"],
+    ]);
+    const r = checkDda(d, dc, s, sc, "SÊNIOR");
+    expect(r.dda.map((x) => x?.label)).toEqual(["OK", "NÃO TEM NO SÊNIOR"]);
+    expect(r.system[0]?.partners).toEqual([0]);
   });
 });

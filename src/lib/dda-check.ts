@@ -65,7 +65,11 @@ const longKeys = (doc: string) => groupsOf(doc).filter((g) => g.length >= 3);
 /** "000186053" = "186053.01"; "NF 226" = "2026226-01" (um termina com o outro). */
 export function docMatch(a: string, b: string): boolean {
   const kb = longKeys(b);
-  return longKeys(a).some((x) => kb.some((y) => x === y || x.endsWith(y) || y.endsWith(x)));
+  // Um ano solto ("FADEZ2026") não serve para casar pelo final ("112026F01").
+  const year = (k: string) => /^20\d\d$/.test(k);
+  return longKeys(a).some((x) =>
+    kb.some((y) => x === y || (!year(y) && x.endsWith(y)) || (!year(x) && y.endsWith(x))),
+  );
 }
 /** Mesmo número inclusive a parcela: "208705-2" = "208705.02". */
 const exactDoc = (a: string, b: string) => {
@@ -119,10 +123,25 @@ export function checkDda(dda: Table, dc: DdaColumns, sys: Table, sc: DdaColumns,
   const sameValue = (t: Item, b: Item) => cents(t.amount) === cents(b.amount);
 
   // 1) Nº do documento + valor (se houver título com o nº exato, inclusive parcela, só ele vale).
-  for (const b of boletos) {
+  //    Primeiro os que batem a data; os de data diferente só depois de tentar valor + data exata,
+  //    para não roubar o título de outro boleto do mesmo fornecedor que bate em tudo menos no nº.
+  const byDoc = (b: Item) => {
     let c = free(b).filter((t) => docMatch(t.doc, b.doc));
     if (c.some((t) => exactDoc(t.doc, b.doc))) c = c.filter((t) => exactDoc(t.doc, b.doc));
-    c = c.filter((t) => sameValue(t, b)).sort((x, y) => Number(x.due !== b.due) - Number(y.due !== b.due));
+    return c.filter((t) => sameValue(t, b)).sort((x, y) => Number(x.due !== b.due) - Number(y.due !== b.due));
+  };
+  for (const b of boletos) {
+    const c = byDoc(b).filter((t) => dateKind(t, b) !== "diverge_date");
+    if (c.length) link(b, [c[0]], dateKind(c[0], b));
+  }
+  for (const b of boletos) {
+    if (done.has(b.row)) continue;
+    const c = free(b).filter((t) => sameValue(t, b) && t.due === b.due && !boletos.some((o) => o !== b && !done.has(o.row) && docMatch(t.doc, o.doc)));
+    if (c.length) link(b, [c[0]], "ok");
+  }
+  for (const b of boletos) {
+    if (done.has(b.row)) continue;
+    const c = byDoc(b);
     if (c.length) link(b, [c[0]], dateKind(c[0], b));
   }
   // 2) Um boleto pagando vários títulos do mesmo fornecedor.
