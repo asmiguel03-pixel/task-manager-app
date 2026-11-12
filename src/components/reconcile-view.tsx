@@ -279,7 +279,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Conferencia relatorio x SAP - ${formatBR(today).replace(/\//g, "-")}.xlsx`;
+    a.download = `Conferencia relatorio x sistema - ${formatBR(today).replace(/\//g, "-")}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -306,7 +306,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
     <div className="flex flex-col gap-5">
       <p className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400">
         <Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
-        Cruza o relatório recebido com a extração do SAP e mostra o que está lançado, o que não está e, dos vencidos, o
+        Cruza o relatório recebido com a extração do sistema (SAP ou outro ERP) e mostra o que está lançado, o que não está e, dos vencidos, o
         que já foi pago. Os arquivos são lidos só no seu navegador — nada é enviado nem salvo.
       </p>
 
@@ -330,8 +330,8 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
 
         <SourceCard
           step={2}
-          title="Extração do SAP"
-          hint="Escolher a extração (FBL1N com partidas abertas e compensadas)"
+          title="Extração do sistema"
+          hint="Escolher a extração (SAP, Em aberto do ERP...)"
           source={sap}
           error={sapError}
           onFile={openSap}
@@ -350,8 +350,8 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
       {sap && sap.columns.clearingDate === undefined && sap.columns.clearingDoc === undefined && (
         <p className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-          Sem coluna de compensação não dá para saber o que já foi pago. Na FBL1N, marque &quot;Partidas compensadas&quot; e
-          inclua &quot;Data de compensação&quot; no layout antes de exportar.
+          Sem coluna de compensação o app só diz se está lançado, não se já foi pago. Se a extração for do SAP (FBL1N), marque
+          &quot;Partidas compensadas&quot; e inclua &quot;Data de compensação&quot; no layout antes de exportar.
         </p>
       )}
 
@@ -434,7 +434,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
                     <th className="px-3 py-2.5 text-center font-medium">Docs</th>
                     <th className="px-3 py-2.5 text-right font-medium">Total</th>
                     <th className="px-3 py-2.5 font-medium">Vencimento</th>
-                    <th className="px-3 py-2.5 font-medium">SAP</th>
+                    <th className="px-3 py-2.5 font-medium">Sistema</th>
                     <th className="px-3 py-2.5 font-medium">Pagamento</th>
                     <th className="px-3 py-2.5 font-medium">Não lançados</th>
                   </tr>
@@ -503,7 +503,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
                   <th className="px-3 py-2.5 font-medium">Fornecedor</th>
                   <th className="px-3 py-2.5 text-right font-medium">Valor</th>
                   <th className="px-3 py-2.5 font-medium">Vencimento</th>
-                  <th className="px-3 py-2.5 font-medium">SAP</th>
+                  <th className="px-3 py-2.5 font-medium">Sistema</th>
                   <th className="px-3 py-2.5 font-medium">Pagamento</th>
                   <th className="px-3 py-2.5 font-medium">Observação</th>
                 </tr>
@@ -528,7 +528,7 @@ export function ReconcileView({ toast }: { toast: (message: string, kind?: "succ
                     </td>
                     <td className="px-3 py-2 text-xs text-zinc-500">
                       {r.note}
-                      {r.posted === "posted_diff" && r.sapAmount !== undefined && ` (SAP: ${brl(Math.abs(r.sapAmount))})`}
+                      {r.posted === "posted_diff" && r.sapAmount !== undefined && ` (sistema: ${brl(Math.abs(r.sapAmount))})`}
                     </td>
                   </tr>
                 ))}

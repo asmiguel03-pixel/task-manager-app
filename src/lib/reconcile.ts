@@ -343,7 +343,7 @@ export function reconcile(
           dueDate: reportDue,
           posted: "not_posted",
           payment: "unknown",
-          note: overdue ? "Não encontrado no SAP — e já venceu" : "Não encontrado no SAP",
+          note: overdue ? "Não encontrado no sistema — e já venceu" : "Não encontrado no sistema",
         },
       ];
     }
@@ -365,9 +365,9 @@ export function reconcile(
     const notes: string[] = [];
     if (matchedBy === "group") notes.push(`Lançado pela fatura ${group}`);
     if (matchedByTax) notes.push("Achado pelo CNPJ e valor (nº diferente)");
-    if (diff) notes.push(matchedBy === "group" ? "Total da fatura diferente no SAP" : "Valor diferente no SAP");
+    if (diff) notes.push(matchedBy === "group" ? "Total da fatura diferente no sistema" : "Valor diferente no sistema");
     if (candidates.length > 1)
-      notes.push(matchedByTax ? `${candidates.length} lançamentos desse CNPJ com esse valor` : `${candidates.length} lançamentos com esse número no SAP`);
+      notes.push(matchedByTax ? `${candidates.length} lançamentos desse CNPJ com esse valor` : `${candidates.length} lançamentos com esse número no sistema`);
     return [
       {
         ...base,
@@ -474,7 +474,7 @@ export function emailText(rows: ReconcileRow[], today: string, formatDate: (iso:
       : ` — ${Math.abs(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }).replace(/\s/g, " ")}`;
   const line = (r: ReconcileRow) => `• ${r.doc}${r.supplier ? ` (${r.supplier})` : ""}${money(r.amount)}`;
   const parts = [
-    `Segue a análise do relatório (${s.total} itens), conferida no SAP em ${formatDate(today)}:`,
+    `Segue a análise do relatório (${s.total} itens), conferida no sistema em ${formatDate(today)}:`,
     "",
     `• Lançados: ${s.posted}${s.postedDiff ? ` (${s.postedDiff} com valor diferente)` : ""}`,
     `• Não lançados: ${s.notPosted}`,
@@ -488,7 +488,7 @@ export function emailText(rows: ReconcileRow[], today: string, formatDate: (iso:
   }
   const diff = rows.filter((r) => r.posted === "posted_diff");
   if (diff.length) {
-    parts.push("", "Lançados com valor diferente:", ...diff.map((r) => `${line(r)} — no SAP${money(r.sapAmount)}`));
+    parts.push("", "Lançados com valor diferente:", ...diff.map((r) => `${line(r)} — no sistema${money(r.sapAmount)}`));
   }
   parts.push("", "O detalhe item a item está na planilha em anexo.");
   return parts.join("\n");
@@ -507,7 +507,7 @@ function groupEmailText(rows: ReconcileRow[], today: string, formatDate: (iso: s
   const open = overdue.filter((g) => g.posted !== "not_posted" && g.payment !== "paid");
 
   const parts = [
-    `Segue a análise do relatório (${plural(groups.length, "fatura", "faturas")}, ${plural(rows.length, "documento", "documentos")}), conferida no SAP em ${formatDate(today)}:`,
+    `Segue a análise do relatório (${plural(groups.length, "fatura", "faturas")}, ${plural(rows.length, "documento", "documentos")}), conferida no sistema em ${formatDate(today)}:`,
     "",
     `• Faturas lançadas: ${groups.filter((g) => g.posted === "posted").length}${partial.length ? ` (+ ${partial.length} parcialmente)` : ""}`,
     `• Faturas não lançadas: ${notPosted.length}`,
@@ -517,7 +517,7 @@ function groupEmailText(rows: ReconcileRow[], today: string, formatDate: (iso: s
   if (partial.length) {
     parts.push(
       "",
-      "Faturas lançadas em parte (documentos que faltam no SAP):",
+      "Faturas lançadas em parte (documentos que faltam no sistema):",
       ...partial.map(
         (g) => `${line(g)} — faltam: ${g.rows.filter((r) => r.posted === "not_posted").map((r) => r.doc).join(", ")}`,
       ),
@@ -525,7 +525,7 @@ function groupEmailText(rows: ReconcileRow[], today: string, formatDate: (iso: s
   }
   if (open.length) parts.push("", "Vencidas e ainda em aberto:", ...open.map(line));
   const diff = groups.filter((g) => g.diffCount > 0);
-  if (diff.length) parts.push("", "Com valor diferente no SAP:", ...diff.map(line));
+  if (diff.length) parts.push("", "Com valor diferente no sistema:", ...diff.map(line));
   parts.push("", "O detalhe item a item está na planilha em anexo.");
   return parts.join("\n");
 }

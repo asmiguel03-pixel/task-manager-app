@@ -30,7 +30,7 @@ const PAYMENT_STYLE: Record<PaymentState, StyleName> = {
 /** Planilha com as colunas do relatório original + o resultado da conferência. */
 export function exportReconcileXlsx(report: Table, rc: ReportColumns, rows: ReconcileRow[], today: string): Uint8Array {
   const s = reconcileSummary(rows, today);
-  const header = [...report.headers, "Lançado no SAP", "Pagamento", "Valor no SAP", "Observação"];
+  const header = [...report.headers, "Lançado no sistema", "Pagamento", "Valor no sistema", "Observação"];
   const lastCol = columnName(header.length - 1);
 
   const original = (r: ReconcileRow): StyledCell[] =>
@@ -65,7 +65,7 @@ export function exportReconcileXlsx(report: Table, rc: ReportColumns, rows: Reco
         34,
       ],
       rows: [
-        { height: 28, cells: [{ v: `CONFERÊNCIA DE RELATÓRIO × SAP — ${formatBR(today)}`, s: "title" }] },
+        { height: 28, cells: [{ v: `CONFERÊNCIA DE RELATÓRIO × SISTEMA — ${formatBR(today)}`, s: "title" }] },
         {
           height: 18,
           cells: [
@@ -115,7 +115,7 @@ function groupPayment(g: GroupResult, today: string): [string, StyleName] {
 
 /** Uma linha por fatura: quantos documentos, total, situação no SAP e o que falta. */
 function groupSheet(groups: GroupResult[], today: string): WorkbookSheet {
-  const header = ["Fatura", "Documentos", "Total", "Vencimento", "No SAP", "Pagamento", "Documentos não lançados"];
+  const header = ["Fatura", "Documentos", "Total", "Vencimento", "No sistema", "Pagamento", "Documentos não lançados"];
   const first = 4;
   const last = first + Math.max(groups.length, 1) - 1;
   const notPosted = groups.filter((g) => g.posted !== "posted").length;
@@ -128,7 +128,7 @@ function groupSheet(groups: GroupResult[], today: string): WorkbookSheet {
     merges: ["A1:G1", "A2:G2"],
     widths: [14, 12, 16, 13, 16, 30, 50],
     rows: [
-      { height: 28, cells: [{ v: `CONFERÊNCIA POR FATURA × SAP — ${formatBR(today)}`, s: "title" }] },
+      { height: 28, cells: [{ v: `CONFERÊNCIA POR FATURA × SISTEMA — ${formatBR(today)}`, s: "title" }] },
       {
         height: 18,
         cells: [

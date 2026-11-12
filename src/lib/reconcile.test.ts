@@ -101,7 +101,7 @@ describe("cruzamento", () => {
       ["1004", "not_posted", "unknown", undefined],
       ["1005", "posted_diff", "open", undefined],
     ]);
-    expect(rows[4]).toMatchObject({ amount: 90, sapAmount: -95, note: "Valor diferente no SAP" });
+    expect(rows[4]).toMatchObject({ amount: 90, sapAmount: -95, note: "Valor diferente no sistema" });
   });
 
   it("resume e monta o texto do e-mail", () => {
