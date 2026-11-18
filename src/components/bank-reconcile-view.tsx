@@ -17,7 +17,7 @@ import {
   type LedgerColumns,
 } from "@/lib/bank-reconcile";
 import { readStatementPdf, type Statement } from "@/lib/bank-statement";
-import { readPdfText, toLines } from "@/lib/pdf-text";
+import { readPdfLines } from "@/lib/pdf-read";
 import { parseDelimited, tableFromSheet, type Table } from "@/lib/reconcile";
 import { formatBR } from "@/lib/work-tools";
 import { XLSX_MIME } from "@/lib/xlsx";
@@ -151,7 +151,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
     setLedgerError("");
     try {
       if (/\.pdf$/i.test(file.name)) {
-        const ledger = ledgerFromPdfLines(toLines(await readPdfText(new Uint8Array(await file.arrayBuffer()))));
+        const ledger = ledgerFromPdfLines((await readPdfLines(new Uint8Array(await file.arrayBuffer()))).lines);
         if (!ledger.entries.length) throw new Error(ledger.warnings[0] ?? "Não encontrei lançamentos no razão em PDF. Tente exportar em Excel.");
         setLedgerFile({ fileName: file.name, kind: "pdf", ledger });
       } else {

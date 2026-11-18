@@ -327,6 +327,10 @@ const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
 
 type Token = { t: "num"; v: number } | { t: "str"; v: string } | { t: "op"; v: string } | { t: "arr"; v: Token[] } | { t: "name"; v: string };
 
+const NAME_RE = /\/[^\s/\[\]<>()%{}]*/y;
+const WORD_RE = /[^\s/\[\]<>()%{}]+/y;
+const WORD_NUM = /^[+-]?(\d+\.?\d*|\.\d+)$/;
+
 function tokenize(src: string): Token[] {
   const out: Token[] = [];
   const stack: Token[][] = [out];
@@ -390,18 +394,20 @@ function tokenize(src: string): Token[] {
       // dicionários inline (<< >>): ignorados
       i += src[i + 1] === c ? 2 : 1;
     } else if (c === "/") {
-      const m = /^\/[^\s/\[\]<>()%{}]*/.exec(src.slice(i))!;
+      NAME_RE.lastIndex = i;
+      const m = NAME_RE.exec(src)!;
       push({ t: "name", v: m[0].slice(1) });
       i += m[0].length;
     } else {
-      const m = /^[^\s/\[\]<>()%{}]+/.exec(src.slice(i));
+      WORD_RE.lastIndex = i;
+      const m = WORD_RE.exec(src);
       if (!m) {
         i++;
         continue;
       }
       const word = m[0];
       const n = Number(word);
-      push(Number.isFinite(n) && /^[+-]?(\d+\.?\d*|\.\d+)$/.test(word) ? { t: "num", v: n } : { t: "op", v: word });
+      push(Number.isFinite(n) && WORD_NUM.test(word) ? { t: "num", v: n } : { t: "op", v: word });
       i += word.length;
       if (word === "BI") {
         // imagem inline: pula até EI
@@ -565,17 +571,21 @@ async function contentText(
   }
 }
 
-/** Extrai os trechos de texto de todas as páginas, com posição. */
-export async function readPdfText(bytes: Uint8Array): Promise<TextItem[]> {
+interface PdfPage {
+  content: string;
+  resources: string;
+}
+
+/** Abre o PDF e devolve o conteúdo de cada página (na ordem da árvore /Pages). */
+async function loadPages(bytes: Uint8Array): Promise<{ objects: Map<number, PdfObject>; pages: PdfPage[] }> {
   if (latin1(bytes.subarray(0, 5)) !== "%PDF-") throw new Error("O arquivo não é um PDF.");
   const objects = await readObjects(bytes);
   if ([...objects.values()].some((o) => /\/Encrypt\b/.test(o.dict) && /\/Type\s*\/XRef|trailer/.test(o.dict))) {
     throw new Error("PDF protegido por senha: abra e salve uma cópia sem proteção.");
   }
 
-  // Páginas na ordem da árvore /Pages.
   const catalog = [...objects.values()].find((o) => /\/Type\s*\/Catalog/.test(o.dict));
-  const pages: PdfObject[] = [];
+  const nodes: PdfObject[] = [];
   const walk = (id: number, inherited: string, guard = 0) => {
     const node = objects.get(id);
     if (!node || guard > 50) return;
@@ -583,27 +593,198 @@ export async function readPdfText(bytes: Uint8Array): Promise<TextItem[]> {
     if (/\/Type\s*\/Pages/.test(node.dict)) {
       for (const kid of refs(dictValue(node.dict, "Kids"))) walk(kid, res, guard + 1);
     } else if (/\/Type\s*\/Page\b/.test(node.dict)) {
-      pages.push({ dict: dictValue(node.dict, "Resources") ? node.dict : `${node.dict} /Resources ${inherited}` });
+      nodes.push({ dict: dictValue(node.dict, "Resources") ? node.dict : `${node.dict} /Resources ${inherited}` });
     }
   };
   const root = catalog ? refs(dictValue(catalog.dict, "Pages"))[0] : undefined;
   if (root !== undefined) walk(root, "");
-  if (!pages.length) {
-    for (const o of objects.values()) if (/\/Type\s*\/Page\b/.test(o.dict)) pages.push(o);
+  if (!nodes.length) {
+    for (const o of objects.values()) if (/\/Type\s*\/Page\b/.test(o.dict)) nodes.push(o);
   }
 
-  const out: TextItem[] = [];
-  for (const [i, page] of pages.entries()) {
-    const contents = refs(dictValue(page.dict, "Contents"));
+  const pages: PdfPage[] = [];
+  for (const page of nodes) {
     let content = "";
-    for (const id of contents) {
+    for (const id of refs(dictValue(page.dict, "Contents"))) {
       const obj = objects.get(id);
       if (obj) content += `${latin1(await streamData(obj))}\n`;
     }
     const res = dictValue(page.dict, "Resources") ?? "";
-    const resDict = res.startsWith("<<") ? res : objects.get(refs(res)[0])?.dict ?? "";
-    await contentText(content, i + 1, IDENTITY, resDict, objects, out);
+    pages.push({ content, resources: res.startsWith("<<") ? res : objects.get(refs(res)[0])?.dict ?? "" });
   }
+  return { objects, pages };
+}
+
+/** Extrai os trechos de texto de todas as páginas, com posição. */
+export async function readPdfText(bytes: Uint8Array): Promise<TextItem[]> {
+  const { objects, pages } = await loadPages(bytes);
+  const out: TextItem[] = [];
+  for (const [i, page] of pages.entries()) await contentText(page.content, i + 1, IDENTITY, page.resources, objects, out);
+  return out;
+}
+
+// ---------- Desenhos (texto convertido em contornos) ----------
+
+/** Um preenchimento (operadores f, F, f*, B...): contornos já achatados, em coordenadas da página. */
+export interface PdfFill {
+  page: number;
+  /** Cada contorno é uma lista plana [x0, y0, x1, y1, …]. */
+  paths: number[][];
+}
+
+const BEZIER_STEPS = 6;
+
+/** Lê os preenchimentos de um conteúdo (inclui formulários /XObject). */
+async function contentShapes(
+  content: string,
+  page: number,
+  ctm0: Matrix,
+  resources: string,
+  objects: Map<number, PdfObject>,
+  out: PdfFill[],
+  depth = 0,
+): Promise<void> {
+  const xobjects = (() => {
+    const v = dictValue(resources, "XObject");
+    if (!v) return new Map<string, number>();
+    const inner = v.startsWith("<<") ? v : objects.get(refs(v)[0])?.dict ?? "";
+    return new Map([...inner.matchAll(/\/([^\s/]+)\s+(\d+)\s+\d+\s+R/g)].map((m) => [m[1], Number(m[2])]));
+  })();
+  let ctm = ctm0;
+  const gstack: Matrix[] = [];
+  let paths: number[][] = [];
+  let cur: number[] | null = null;
+  let cx = 0;
+  let cy = 0;
+  let sx = 0;
+  let sy = 0;
+  const pt = (x: number, y: number) => {
+    cur!.push(ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]);
+    cx = x;
+    cy = y;
+  };
+  const curve = (x1: number, y1: number, x2: number, y2: number, x3: number, y3: number) => {
+    if (!cur) return;
+    const x0 = cx;
+    const y0 = cy;
+    for (let k = 1; k <= BEZIER_STEPS; k++) {
+      const u = k / BEZIER_STEPS;
+      const a = (1 - u) ** 3;
+      const b = 3 * (1 - u) ** 2 * u;
+      const c = 3 * (1 - u) * u * u;
+      const d = u ** 3;
+      pt(a * x0 + b * x1 + c * x2 + d * x3, a * y0 + b * y1 + c * y2 + d * y3);
+    }
+  };
+  const nums: number[] = [];
+  let lastName = "";
+  // Leitura direta, sem montar a lista de tokens: conteúdos de contorno são grandes.
+  const re = /\/([^\s/\[\]<>()%{}]*)|\((?:\\.|[^\\)])*\)|<[^<>]*>|[^\s/\[\]<>()%{}]+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content))) {
+    const w = m[0];
+    if (m[1] !== undefined) {
+      lastName = m[1];
+      continue;
+    }
+    const n = Number(w);
+    if (WORD_NUM.test(w)) {
+      nums.push(n);
+      continue;
+    }
+    const a = nums;
+    switch (w) {
+      case "q":
+        gstack.push(ctm);
+        break;
+      case "Q":
+        ctm = gstack.pop() ?? ctm0;
+        break;
+      case "cm":
+        if (a.length >= 6) ctm = multiply(a.slice(-6) as Matrix, ctm);
+        break;
+      case "m":
+        if (cur && cur.length > 2) paths.push(cur);
+        cur = [];
+        pt(a[a.length - 2], a[a.length - 1]);
+        sx = cx;
+        sy = cy;
+        break;
+      case "l":
+        if (cur) pt(a[a.length - 2], a[a.length - 1]);
+        break;
+      case "c":
+        if (a.length >= 6) curve(a[a.length - 6], a[a.length - 5], a[a.length - 4], a[a.length - 3], a[a.length - 2], a[a.length - 1]);
+        break;
+      case "v":
+        if (a.length >= 4) curve(cx, cy, a[a.length - 4], a[a.length - 3], a[a.length - 2], a[a.length - 1]);
+        break;
+      case "y":
+        if (a.length >= 4) curve(a[a.length - 4], a[a.length - 3], a[a.length - 2], a[a.length - 1], a[a.length - 2], a[a.length - 1]);
+        break;
+      case "h":
+        // fecha o contorno: o ponto atual volta ao início
+        if (cur && cur.length > 2) paths.push(cur);
+        cur = null;
+        cx = sx;
+        cy = sy;
+        break;
+      case "re": {
+        const [x, y, wd, ht] = a.slice(-4);
+        if (cur && cur.length > 2) paths.push(cur);
+        cur = [];
+        pt(x, y);
+        pt(x + wd, y);
+        pt(x + wd, y + ht);
+        pt(x, y + ht);
+        paths.push(cur);
+        cur = null;
+        break;
+      }
+      case "f":
+      case "F":
+      case "f*":
+      case "B":
+      case "B*":
+      case "b":
+      case "b*":
+        if (cur && cur.length > 2) paths.push(cur);
+        if (paths.length) out.push({ page, paths });
+        paths = [];
+        cur = null;
+        break;
+      case "n":
+      case "S":
+      case "s":
+        paths = [];
+        cur = null;
+        break;
+      case "BT":
+        // texto de verdade não interessa aqui; pula até ET
+        re.lastIndex = Math.max(re.lastIndex, content.indexOf("ET", re.lastIndex) + 2 || re.lastIndex);
+        break;
+      case "Do": {
+        const id = xobjects.get(lastName);
+        const xo = id !== undefined ? objects.get(id) : undefined;
+        if (depth < 5 && xo && /\/Subtype\s*\/Form/.test(xo.dict)) {
+          const mx = numbers(dictValue(xo.dict, "Matrix"));
+          const formMatrix: Matrix = mx.length === 6 ? (mx as Matrix) : IDENTITY;
+          const res = dictValue(xo.dict, "Resources") ?? resources;
+          const resDict = res.startsWith("<<") ? res : objects.get(refs(res)[0])?.dict ?? resources;
+          await contentShapes(latin1(await streamData(xo)), page, multiply(formMatrix, ctm), resDict, objects, out, depth + 1);
+        }
+        break;
+      }
+    }
+    nums.length = 0;
+  }
+}
+
+/** Preenchimentos de todas as páginas (para PDFs em que o texto virou desenho). */
+export async function readPdfShapes(bytes: Uint8Array): Promise<PdfFill[]> {
+  const { objects, pages } = await loadPages(bytes);
+  const out: PdfFill[] = [];
+  for (const [i, page] of pages.entries()) await contentShapes(page.content, i + 1, IDENTITY, page.resources, objects, out);
   return out;
 }
 

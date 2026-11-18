@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { CircleCheck, Download, FileCheck, List, Lock, Trash2 } from "lucide-react";
+import { CircleCheck, Download, FileCheck, Info, List, Lock, Trash2 } from "lucide-react";
 import { exportStatementsXlsx } from "@/lib/bank-export";
 import { readStatementPdf, type Statement } from "@/lib/bank-statement";
 import { formatBR } from "@/lib/work-tools";
@@ -196,6 +196,13 @@ export function StatementConvertView({ toast }: { toast: (message: string, kind?
                       <p className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400">
                         <CircleCheck className="size-3.5" aria-hidden />
                         Saldo inicial + lançamentos = saldo final. Leitura conferida.
+                      </p>
+                    )}
+                    {it.data.fromOutlines && (
+                      <p className="flex items-start gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                        <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        PDF sem texto (impresso pelo navegador): as letras foram reconhecidas pelo desenho. Os valores
+                        são conferidos pelos saldos; dê uma olhada nos históricos.
                       </p>
                     )}
                     <Warnings list={it.data.warnings} />

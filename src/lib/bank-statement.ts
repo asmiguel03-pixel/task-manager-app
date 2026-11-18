@@ -3,7 +3,8 @@
  * Layouts conhecidos: Bradesco (Extrato Mensal / Por Período) e Banco do Brasil
  * (Lançamentos). Outros bancos usam uma leitura genérica pelas colunas do cabeçalho.
  */
-import { readPdfText, toLines, type TextLine } from "./pdf-text";
+import { readPdfLines } from "./pdf-read";
+import type { TextLine } from "./pdf-text";
 
 export interface StatementEntry {
   date: string; // YYYY-MM-DD
@@ -24,6 +25,8 @@ export interface Statement {
   entries: StatementEntry[];
   /** Avisos de leitura (ex.: saldo que não fecha). */
   warnings: string[];
+  /** PDF sem texto (impresso pelo navegador): letras reconhecidas pelo desenho. */
+  fromOutlines?: boolean;
 }
 
 const MONEY = /^-?\d{1,3}(?:\.\d{3})*,\d{2}$/;
@@ -65,18 +68,25 @@ function parseBradesco(lines: TextLine[]): Statement {
   if (acc) st.account = `Ag. ${acc[1]} · CC ${acc[2].replace(/\s+/g, "")}`;
   const per = /Entre\s+(\d{2}\/\d{2}\/\d{4})\s+e\s+(\d{2}\/\d{2}\/\d{4})/.exec(all);
   if (per) st.period = `${per[1]} a ${per[2]}`;
+  const periodEnd = per ? iso(per[2]) : undefined;
 
   type Tx = { page: number; y: number; entry: StatementEntry; desc: string[] };
   let inTable = false;
   let date = "";
   const txs: Tx[] = [];
   const descLines: { page: number; y: number; text: string }[] = [];
+  // Início da coluna Lançamento: no PDF do banco fica depois de x=90; no impresso
+  // pelo navegador (Microsoft Print to PDF) a tabela começa um pouco mais à esquerda.
+  let descMin = 90;
 
   for (const line of lines) {
     const t = line.text;
-    if (/Saldos Invest/i.test(t)) break;
+    // "Últimos Lançamentos" são do mês seguinte, fora do período do extrato.
+    if (/Saldos Invest|[ÚU]ltimos\s+Lan[çc]amentos/i.test(t)) break;
     if (/Dcto\./.test(t) && /Saldo/.test(t)) {
       inTable = true;
+      const head = line.items.find((i) => /^Lan[çc]amento/i.test(i.text.trim()));
+      descMin = head ? Math.min(90, head.x - 8) : 90;
       continue;
     }
     if (!inTable) continue;
@@ -87,6 +97,7 @@ function parseBradesco(lines: TextLine[]): Statement {
     const money = line.items.filter((i) => MONEY.test(i.text.trim()));
     const dateItem = line.items.find((i) => DATE.test(i.text.trim()) && i.x < 100);
     if (dateItem) date = iso(dateItem.text)!;
+    if (periodEnd && date > periodEnd) break;
     if (/SALDO ANTERIOR/.test(t)) {
       if (st.opening === undefined && money.length) st.opening = parseMoneyBR(money[money.length - 1].text);
       continue;
@@ -96,12 +107,12 @@ function parseBradesco(lines: TextLine[]): Statement {
       const balance = money.length >= 2 ? parseMoneyBR(money[money.length - 1].text) : undefined;
       const doc = line.items.find((i) => /^\d+$/.test(i.text.trim()) && i.x > 200 && i.x < 320)?.text.trim();
       const inline = line.items
-        .filter((i) => i !== dateItem && !money.includes(i) && i.text.trim() !== doc && i.x > 90 && i.x < 260)
+        .filter((i) => i !== dateItem && !money.includes(i) && i.text.trim() !== doc && i.x > descMin && i.x < 260)
         .map((i) => i.text.trim())
         .join(" ");
       txs.push({ page: line.page, y: line.y, entry: { date, description: "", doc, amount: value, balance }, desc: inline ? [inline] : [] });
       if (balance !== undefined) st.closing = balance;
-    } else if (line.items.every((i) => i.x > 90 && i.x < 260)) {
+    } else if (line.items.every((i) => i.x > descMin && i.x < 260)) {
       descLines.push({ page: line.page, y: line.y, text: t });
     }
   }
@@ -202,6 +213,7 @@ function parseSantander(lines: TextLine[]): Statement {
   if (acc) st.account = `Ag. ${acc[1]} · CC ${acc[2]}`;
   const per = /Per[íi]odos?:\s*(\d{2}\/\d{2}\/\d{4})\s*a\s*(\d{2}\/\d{2}\/\d{4})/.exec(all);
   if (per) st.period = `${per[1]} a ${per[2]}`;
+  const periodEnd = per ? iso(per[2]) : undefined;
 
   type Tx = { page: number; y: number; entry: StatementEntry; desc: { y: number; text: string }[] };
   const txs: Tx[] = [];
@@ -388,9 +400,14 @@ export function parseStatement(lines: TextLine[]): Statement {
 /** Lê um arquivo de extrato em PDF e devolve os lançamentos (erros com mensagem pronta para a tela). */
 export async function readStatementPdf(file: File): Promise<Statement> {
   if (!/\.pdf$/i.test(file.name)) throw new Error("O extrato precisa ser o PDF do banco.");
-  const lines = toLines(await readPdfText(new Uint8Array(await file.arrayBuffer())));
-  if (!lines.length) throw new Error("Não consegui ler texto nesse PDF (pode ser imagem escaneada).");
+  const { lines, fromOutlines } = await readPdfLines(new Uint8Array(await file.arrayBuffer()));
+  if (!lines.length) {
+    throw new Error(
+      "Não consegui ler texto nesse PDF (pode ser imagem escaneada). Se puder, baixe o extrato direto no site do banco, pela opção de salvar em PDF.",
+    );
+  }
   const data = parseStatement(lines);
   if (!data.entries.length) throw new Error("Não encontrei lançamentos nesse extrato. Me mande este modelo para eu incluir.");
+  if (fromOutlines) data.fromOutlines = true;
   return data;
 }
