@@ -137,6 +137,87 @@ function parseBradesco(lines: TextLine[]): Statement {
   return st;
 }
 
+// ---------- Bradesco — Extrato Unificado (Pessoa Jurídica, mensal) ----------
+
+/**
+ * Extrato mensal oficial do Bradesco ("Extrato Unificado - Pessoa Jurídica"): datas dd/mm,
+ * colunas Crédito e Débito separadas (sem sinal) e saldo só no fim de cada dia.
+ * O histórico pode ter linhas de detalhe abaixo do lançamento.
+ */
+function parseBradescoUnificado(lines: TextLine[]): Statement {
+  const st: Statement = { bank: "Bradesco", entries: [], warnings: [] };
+  const all = lines.map((l) => l.text).join("\n");
+  const acc = /Ag[êe]ncia:\s*(\d+)\s*-\s*(\d)\s*-\s*Conta:\s*(\d+)\s*-\s*(\w)/.exec(all);
+  if (acc) st.account = `Ag. ${acc[1]}-${acc[2]} · CC ${acc[3]}-${acc[4]}`;
+  const per = /(\d{2}\/\d{2}\/\d{4})\s*a\s*(\d{2}\/\d{2}\/\d{4})/.exec(all);
+  if (per) st.period = `${per[1]} a ${per[2]}`;
+  const end = per ? iso(per[2])! : undefined;
+  /** dd/mm → data completa, pelo ano do fim do período (virada de ano volta um ano). */
+  const fullDate = (ddmm: string) => {
+    const [d, m] = ddmm.split("/");
+    const year = Number(end?.slice(0, 4) ?? new Date().getFullYear());
+    const candidate = `${year}-${m}-${d}`;
+    return end && candidate > end ? `${year - 1}-${m}-${d}` : candidate;
+  };
+
+  let cols: { desc: number; doc: number; credit: number; debit: number; balance: number } | undefined;
+  let date = "";
+  let last: StatementEntry | undefined;
+  for (const line of lines) {
+    const t = line.text;
+    if (/Data/.test(t) && /Docto/.test(t) && /Cr[ée]dito/.test(t) && /D[ée]bito/.test(t)) {
+      const x = (re: RegExp) => line.items.find((i) => re.test(i.text))?.x;
+      cols = {
+        desc: 70,
+        doc: x(/^Docto/) ?? 278,
+        credit: x(/^Cr[ée]dito/) ?? 341,
+        debit: x(/^D[ée]bito/) ?? 428,
+        balance: x(/^Saldo/) ?? 515,
+      };
+      continue;
+    }
+    if (!cols) continue;
+    if (/^Total\b/.test(t)) {
+      const bal = line.items.filter((i) => MONEY.test(i.text.trim()) && i.x >= cols!.balance - 5).at(-1);
+      if (bal) st.closing = parseMoneyBR(bal.text);
+      break;
+    }
+    if (/^Mod\.:|Extrato Unificado|Ag[êe]ncia:/.test(t)) continue; // rodapé e cabeçalho de página
+
+    const dateItem = line.items.find((i) => /^\d{2}\/\d{2}$/.test(i.text.trim()) && i.x < cols!.desc);
+    if (dateItem) date = fullDate(dateItem.text.trim());
+    const money = line.items.filter((i) => MONEY.test(i.text.trim()));
+    const balanceItem = money.find((i) => i.x >= cols!.balance - 5);
+    const amountItem = money.find((i) => i.x < cols!.balance - 5);
+    const descText = line.items
+      .filter((i) => i !== dateItem && !money.includes(i) && i.x >= cols!.desc - 10 && i.x < cols!.doc - 10)
+      .map((i) => i.text.trim())
+      .join(" ");
+
+    if (/Saldo Anterior/i.test(t)) {
+      if (st.opening === undefined && balanceItem) st.opening = parseMoneyBR(balanceItem.text);
+      continue;
+    }
+    if (amountItem && date) {
+      const value = parseMoneyBR(amountItem.text);
+      const isDebit = amountItem.x >= cols.debit - 10;
+      const doc = line.items
+        .find((i) => /^\d+$/.test(i.text.trim()) && i.x >= cols!.doc - 15 && i.x < cols!.credit - 10)
+        ?.text.trim();
+      last = { date, description: descText, doc, amount: isDebit ? -value : value };
+      st.entries.push(last);
+    } else if (descText && last) {
+      last.description = last.description ? `${last.description} · ${descText}` : descText;
+    }
+    if (balanceItem && last) {
+      last.balance = parseMoneyBR(balanceItem.text);
+      st.closing = last.balance;
+    }
+  }
+  checkBalances(st);
+  return st;
+}
+
 // ---------- Banco do Brasil ----------
 
 function parseBB(lines: TextLine[]): Statement {
@@ -391,6 +472,7 @@ function parseGeneric(lines: TextLine[]): Statement {
 export function parseStatement(lines: TextLine[]): Statement {
   const all = lines.map((l) => l.text).join("\n");
   if (/Extrato Mensal \/ Por Per[ií]odo|Extrato de: Ag:/.test(all) && /Dcto\./.test(all)) return parseBradesco(lines);
+  if (/Extrato Unificado/i.test(all) && /Demonstrativo da Movimenta/i.test(all)) return parseBradescoUnificado(lines);
   if (/Dt\.\s*balancete/.test(all) && /Ouvidoria BB|Conta corrente/.test(all)) return parseBB(lines);
   if (/Santander/i.test(all) && /Hist[óo]rico/.test(all)) return parseSantander(lines);
   if (/SAC CAIXA|Al[ôo] CAIXA/i.test(all) && /Data de/.test(all)) return parseCaixa(lines);

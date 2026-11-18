@@ -33,6 +33,21 @@ const latin1 = (bytes: Uint8Array) => {
 };
 
 async function inflate(data: Uint8Array): Promise<Uint8Array> {
+  // Quebra de linha antes de "endstream" não faz parte dos dados (o descompactador recusa sobras).
+  let end = data.length;
+  while (end > 0 && (data[end - 1] === 0x0a || data[end - 1] === 0x0d)) end--;
+  const candidates = end < data.length ? [data, data.subarray(0, end)] : [data];
+  for (const d of candidates) {
+    try {
+      return await inflateExact(d);
+    } catch {
+      // tenta sem a quebra de linha
+    }
+  }
+  throw new Error("Não foi possível descompactar o PDF.");
+}
+
+async function inflateExact(data: Uint8Array): Promise<Uint8Array> {
   for (const format of ["deflate", "deflate-raw"] as const) {
     try {
       const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream(format));
@@ -104,7 +119,12 @@ async function readObjects(bytes: Uint8Array): Promise<Map<number, PdfObject>> {
       const dict = body.slice(0, s).trim();
       const headerLen = body.slice(s).startsWith("stream\r\n") ? 8 : 7;
       const dataStart = bodyStart + s + headerLen;
-      const declared = Number(dictValue(dict, "Length"));
+      // /Length pode ser referência a outro objeto ("59 0 R" → "59 0 obj 902 endobj").
+      const lenValue = dictValue(dict, "Length") ?? "";
+      const lenRef = /^(\d+)\s+\d+\s+R$/.exec(lenValue.trim());
+      const declared = lenRef
+        ? Number(new RegExp(`(?:^|\\s)${lenRef[1]}\\s+0\\s+obj\\s*(\\d+)\\s*endobj`).exec(text)?.[1])
+        : Number(lenValue);
       const endStream = text.indexOf("endstream", dataStart);
       const len = Number.isFinite(declared) && declared > 0 && dataStart + declared <= endStream ? declared : endStream - dataStart;
       objects.set(num, { dict, stream: bytes.subarray(dataStart, dataStart + len) });
@@ -223,7 +243,8 @@ function widthTable(font: PdfObject, objects: Map<number, PdfObject>): (code: nu
     const desc = objects.get(refs(dictValue(font.dict, "DescendantFonts"))[0]);
     const dw = Number(dictValue(desc?.dict ?? "", "DW")) || 1000;
     const table = new Map<number, number>();
-    const w = resolve(dictValue(desc?.dict ?? "", "W"), objects) ?? "";
+    // Tira os colchetes de fora: "[1 [556 444] 43 51 500]" → "1 [556 444] 43 51 500".
+    const w = (resolve(dictValue(desc?.dict ?? "", "W"), objects) ?? "").trim().replace(/^\[/, "").replace(/\]$/, "");
     // Formato: c [w1 w2 ...]  ou  c1 c2 w
     const tokens = [...w.matchAll(/\[[^\]]*\]|-?\d+(?:\.\d+)?/g)].map((m) => m[0]);
     for (let i = 0; i < tokens.length; ) {
