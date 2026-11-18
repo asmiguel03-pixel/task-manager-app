@@ -16,7 +16,7 @@ import {
   type Ledger,
   type LedgerColumns,
 } from "@/lib/bank-reconcile";
-import { parseStatement, type Statement } from "@/lib/bank-statement";
+import { readStatementPdf, type Statement } from "@/lib/bank-statement";
 import { readPdfText, toLines } from "@/lib/pdf-text";
 import { parseDelimited, tableFromSheet, type Table } from "@/lib/reconcile";
 import { formatBR } from "@/lib/work-tools";
@@ -27,7 +27,7 @@ import { btnGhost, btnPrimary, cx, inputCls } from "./ui";
 const brl = (n: number | undefined) =>
   n === undefined ? "—" : n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-function downloadBytes(bytes: Uint8Array, name: string) {
+export function downloadBytes(bytes: Uint8Array, name: string) {
   const blob = new Blob([bytes as BlobPart], { type: XLSX_MIME });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -89,7 +89,7 @@ async function toLogo(blob: Blob): Promise<CapaLogo | undefined> {
   }
 }
 
-function Warnings({ list }: { list: string[] }) {
+export function Warnings({ list }: { list: string[] }) {
   if (!list.length) return null;
   return (
     <ul className="space-y-1">
@@ -139,11 +139,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
   const openStatement = async (file: File) => {
     setStatementError("");
     try {
-      if (!/\.pdf$/i.test(file.name)) throw new Error("Por enquanto o extrato precisa ser o PDF do banco.");
-      const lines = toLines(await readPdfText(new Uint8Array(await file.arrayBuffer())));
-      if (!lines.length) throw new Error("Não consegui ler texto nesse PDF (pode ser imagem escaneada).");
-      const data = parseStatement(lines);
-      if (!data.entries.length) throw new Error("Não encontrei lançamentos nesse extrato. Me mande este modelo para eu incluir.");
+      const data = await readStatementPdf(file);
       setStatement({ fileName: file.name, data });
     } catch (e) {
       setStatement(null);

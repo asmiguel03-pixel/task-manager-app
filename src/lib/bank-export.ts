@@ -294,3 +294,86 @@ export function exportBankXlsx(
   const statementClosing = `EXTRATO!F${extrato.rows.length}`;
   return buildWorkbook([capaSheet(st, ledger, r, s, info, { ledgerClosing, statementClosing, periodEnd: end }), extrato, razao]);
 }
+
+// ---------- Conversor: extrato(s) em PDF → Excel ----------
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Nome curto da aba: banco + mês do extrato (ex.: "Bradesco 10-2026"). */
+function statementTabName(st: Statement): string {
+  const last = st.entries.at(-1)?.date;
+  const month = last ? `${last.slice(5, 7)}-${last.slice(0, 4)}` : "";
+  return `${st.bank}${month ? ` ${month}` : ""}`;
+}
+
+/** Garante nomes de aba únicos (o Excel não aceita repetidos, nem com maiúsculas diferentes). */
+function uniqueNames(names: string[]): string[] {
+  const used = new Set<string>();
+  return names.map((raw) => {
+    const base = (raw.replace(/[\\/?*[\]:]/g, " ").trim() || "Extrato").slice(0, 26);
+    let name = base;
+    for (let k = 2; used.has(name.toLowerCase()); k++) name = `${base} (${k})`;
+    used.add(name.toLowerCase());
+    return name;
+  });
+}
+
+/** Aba do extrato com totais de entradas e saídas (fórmulas) e o saldo final. */
+function convertedSheet(st: Statement, name: string): WorkbookSheet {
+  const sheet = statementSheet(st);
+  const first = 4;
+  const last = 3 + st.entries.length;
+  const inflow = round2(st.entries.reduce((s, e) => s + Math.max(e.amount, 0), 0));
+  const outflow = round2(st.entries.reduce((s, e) => s + Math.max(-e.amount, 0), 0));
+  const sum = (col: string, value: number): StyledCell => ({
+    v: { formula: `SUM(${col}${first}:${col}${Math.max(first, last)})`, value },
+    s: "totalMoney",
+  });
+  sheet.rows.push({ cells: [] });
+  sheet.rows.push({ cells: [null, null, { v: "Totais", s: "totalLabel" }, sum("D", inflow), sum("E", outflow), null] });
+  sheet.rows.push({ cells: [null, null, null, null, { v: "Saldo final", s: "totalLabel" }, money(st.closing, "totalMoney")] });
+  return { ...sheet, name };
+}
+
+/** Aba "Resumo" quando há mais de um extrato: uma linha por arquivo. */
+function summarySheet(list: { fileName: string; data: Statement }[], names: string[]): WorkbookSheet {
+  const header = ["Aba", "Arquivo", "Banco", "Conta", "Período", "Saldo inicial", "Entradas", "Saídas", "Saldo final", "Lançamentos", "Avisos"];
+  return {
+    name: "Resumo",
+    landscape: true,
+    freezeRows: 3,
+    filterRow: 3,
+    merges: ["A1:K1"],
+    widths: [20, 30, 14, 26, 24, 15, 15, 15, 15, 12, 50],
+    rows: [
+      { height: 28, cells: [{ v: "EXTRATOS CONVERTIDOS", s: "title" }] },
+      { height: 18, cells: [{ v: `${list.length} extratos`, s: "subtitle" }] },
+      { height: 26, cells: header.map((h) => ({ v: h, s: "th" as const })) },
+      ...list.map(({ fileName, data: st }, i) => ({
+        cells: [
+          text(names[i], "td"),
+          text(fileName, "tdWrap"),
+          text(st.bank, "td"),
+          text(st.account, "td"),
+          text(st.period, "tdCenter"),
+          money(st.opening),
+          money(round2(st.entries.reduce((s, e) => s + Math.max(e.amount, 0), 0))),
+          money(round2(st.entries.reduce((s, e) => s + Math.max(-e.amount, 0), 0))),
+          money(st.closing),
+          { v: st.entries.length, s: "tdCenter" as const },
+          text(st.warnings.join(" "), "tdWrap"),
+        ],
+      })),
+    ],
+  };
+}
+
+/**
+ * Converte um ou mais extratos lidos do PDF em uma planilha: uma aba por extrato
+ * (Data, Histórico, Documento, Entrada, Saída, Saldo) e, se houver mais de um, uma aba de resumo.
+ */
+export function exportStatementsXlsx(list: { fileName: string; data: Statement }[]): Uint8Array {
+  const names = uniqueNames(list.map((s) => statementTabName(s.data)));
+  const sheets = list.map((s, i) => convertedSheet(s.data, names[i]));
+  return buildWorkbook(list.length > 1 ? [summarySheet(list, names), ...sheets] : sheets);
+}

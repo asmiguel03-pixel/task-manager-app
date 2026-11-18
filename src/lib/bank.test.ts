@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bestLedgerTable, guessLedgerColumns, ledgerForPeriod, ledgerFromTable, statementRange, reconcileBank, reconSummary, type LedgerEntry } from "./bank-reconcile";
 import type { StatementEntry } from "./bank-statement";
-import { exportBankXlsx } from "./bank-export";
+import { exportBankXlsx, exportStatementsXlsx } from "./bank-export";
 import { tableFromSheet } from "./reconcile";
 import { readXlsx } from "./xlsx-read";
 import type { CellValue } from "./xlsx-read";
@@ -232,5 +232,40 @@ describe("razão no layout do Contmatic", () => {
     expect(capa.get(9)?.get(2)).toBe("1.01.01.02.01.01.000006");
     expect(capa.get(12)?.get(7)).toBe(1200);
     expect(capa.get(17)?.get(8)).toBe(0);
+  });
+});
+
+describe("conversor de extrato PDF → Excel", () => {
+  const data = {
+    bank: "Bradesco",
+    period: "01/10/2026 a 31/10/2026",
+    opening: 1000,
+    closing: 1150,
+    warnings: [],
+    entries: [
+      { date: "2026-10-01", description: "Crédito CASSI", amount: 300, balance: 1300 },
+      { date: "2026-10-31", description: "Tarifa", doc: "123", amount: -150, balance: 1150 },
+    ],
+  };
+
+  it("um extrato vira uma aba com entradas, saídas, totais e saldo final", async () => {
+    const [sheet, ...rest] = await readXlsx(exportStatementsXlsx([{ fileName: "a.pdf", data }]));
+    expect(rest).toHaveLength(0);
+    expect(sheet.name).toBe("Bradesco 10-2026");
+    expect([...sheet.rows.get(4)!.values()]).toEqual([46296, "Crédito CASSI", 300, 1300]);
+    expect([...sheet.rows.get(5)!.values()]).toEqual([46326, "Tarifa", "123", 150, 1150]);
+    expect([...sheet.rows.get(7)!.values()]).toEqual(["Totais", 300, 150]);
+    expect([...sheet.rows.get(8)!.values()]).toEqual(["Saldo final", 1150]);
+  });
+
+  it("vários extratos ganham um resumo e abas com nomes únicos", async () => {
+    const book = await readXlsx(
+      exportStatementsXlsx([
+        { fileName: "a.pdf", data },
+        { fileName: "b.pdf", data },
+      ]),
+    );
+    expect(book.map((s) => s.name)).toEqual(["Resumo", "Bradesco 10-2026", "Bradesco 10-2026 (2)"]);
+    expect(book[0].rows.get(5)?.get(1)).toBe("b.pdf");
   });
 });

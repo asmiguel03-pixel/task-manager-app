@@ -23,6 +23,7 @@ npm test         # testes unitários (Vitest)
 - **Resumo**: total, pendentes, concluídas e destaque de tarefas atrasadas.
 - **Descrição em Markdown** (negrito, listas, links, código) com pré-visualização no formulário.
 - **Toasts** de feedback ao criar, excluir, duplicar e mudar o status de tarefas.
+- **Extrato PDF → Excel**: converte um ou vários extratos bancários em PDF (Bradesco, BB, Santander, Caixa e leitura genérica) em planilha, com totais e aba de resumo.
 - **Tema claro/escuro** (respeita o sistema e lembra a escolha) e atalhos: `N` nova tarefa, `/` busca, `Esc` fecha modais.
 
 ## Arquitetura

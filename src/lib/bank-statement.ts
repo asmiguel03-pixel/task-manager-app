@@ -3,7 +3,7 @@
  * Layouts conhecidos: Bradesco (Extrato Mensal / Por Período) e Banco do Brasil
  * (Lançamentos). Outros bancos usam uma leitura genérica pelas colunas do cabeçalho.
  */
-import type { TextLine } from "./pdf-text";
+import { readPdfText, toLines, type TextLine } from "./pdf-text";
 
 export interface StatementEntry {
   date: string; // YYYY-MM-DD
@@ -383,4 +383,14 @@ export function parseStatement(lines: TextLine[]): Statement {
   if (/Santander/i.test(all) && /Hist[óo]rico/.test(all)) return parseSantander(lines);
   if (/SAC CAIXA|Al[ôo] CAIXA/i.test(all) && /Data de/.test(all)) return parseCaixa(lines);
   return parseGeneric(lines);
+}
+
+/** Lê um arquivo de extrato em PDF e devolve os lançamentos (erros com mensagem pronta para a tela). */
+export async function readStatementPdf(file: File): Promise<Statement> {
+  if (!/\.pdf$/i.test(file.name)) throw new Error("O extrato precisa ser o PDF do banco.");
+  const lines = toLines(await readPdfText(new Uint8Array(await file.arrayBuffer())));
+  if (!lines.length) throw new Error("Não consegui ler texto nesse PDF (pode ser imagem escaneada).");
+  const data = parseStatement(lines);
+  if (!data.entries.length) throw new Error("Não encontrei lançamentos nesse extrato. Me mande este modelo para eu incluir.");
+  return data;
 }
