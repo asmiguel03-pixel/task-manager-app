@@ -318,6 +318,13 @@ const similarity = (a: string, b: string) => {
   return shared / Math.min(ta.size, tb.size);
 };
 
+/** Histórico sem números/datas, para achar lotes ("SISPAG SALARIOS", "RECEBIMENTOS · PLUXEE"). */
+const batchKey = (d: string) =>
+  norm(d)
+    .replace(/[^a-z ·]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 /** Subconjunto (até `max` itens) que soma exatamente o alvo, em centavos. */
 function subsetSum(values: number[], target: number, max = 8): number[] | null {
   const n = values.length;
@@ -375,6 +382,50 @@ export function reconcileBank(
         usedL.add(best);
         matches.push({ statement: [si], ledger: [best], kind: "1:1", days: dayDiff(s.date, ledger[best].date) });
       }
+    }
+  }
+
+  // 1b) Lotes: vários lançamentos iguais no extrato no mesmo dia (ex.: 70 × "SISPAG SALARIOS")
+  //     = um ou mais lançamentos parecidos no razão (ex.: 2 × "FOPAG - FOLHA SALARIAL").
+  //     Vem antes do passo 2 para os pagamentos do lote não serem somados a outra coisa.
+  const ledgerKey = (d: string) =>
+    norm(d)
+      .replace(/[^a-z ]+/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 2)
+      .slice(0, 4)
+      .join(" ");
+  const batches = new Map<string, number[]>();
+  statement.forEach((s, si) => {
+    if (usedS.has(si)) return;
+    const k = `${s.date}|${Math.sign(s.amount)}|${batchKey(s.description)}`;
+    batches.set(k, [...(batches.get(k) ?? []), si]);
+  });
+  for (const idx of [...batches.values()].sort((a, b) => b.length - a.length)) {
+    if (idx.length < 3) continue;
+    const first = statement[idx[0]];
+    const total = idx.reduce((t, si) => t + cents(statement[si].amount), 0);
+    // Candidatos no razão: mesmo sinal, dentro da janela, agrupados pelo início do histórico.
+    const pools = new Map<string, number[]>();
+    ledger.forEach((l, li) => {
+      if (usedL.has(li) || Math.sign(l.amount) !== Math.sign(first.amount) || dayDiff(l.date, first.date) > windowDays) return;
+      const k = ledgerKey(l.description);
+      pools.set(k, [...(pools.get(k) ?? []), li]);
+    });
+    for (const pool of pools.values()) {
+      const near = [...pool].sort((a, b) => dayDiff(ledger[a].date, first.date) - dayDiff(ledger[b].date, first.date)).slice(0, 16);
+      const single = near.find((li) => cents(ledger[li].amount) === total);
+      const pick = single !== undefined ? [single] : subsetSum(near.map((li) => cents(ledger[li].amount)), total, 6)?.map((k) => near[k]);
+      if (!pick) continue;
+      idx.forEach((si) => usedS.add(si));
+      pick.forEach((li) => usedL.add(li));
+      matches.push({
+        statement: idx,
+        ledger: pick,
+        kind: "grupo",
+        days: Math.max(...pick.map((li) => dayDiff(ledger[li].date, first.date))),
+      });
+      break;
     }
   }
 

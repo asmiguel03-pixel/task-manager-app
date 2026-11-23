@@ -42,6 +42,21 @@ describe("conciliação bancária", () => {
     expect(r.onlyLedger).toEqual([5]);
   });
 
+  it("lote: vários pagamentos iguais no extrato = dois lançamentos do razão (SISPAG × FOPAG)", () => {
+    const salarios = [100, 200, 300, 400, 500].map((v) => st("2026-09-04", -v, "SISPAG SALARIOS"));
+    const extrato = [...salarios, st("2026-09-04", -150, "BOLETO PAGO")];
+    const razao = [
+      lg("2026-09-04", -600, "BX REF NF/3776484- FOPAG - FOLHA SALARIA"),
+      lg("2026-09-04", -900, "BX REF NF/5257438- FOPAG - FOLHA SALARIA"),
+      lg("2026-09-04", -150, "TRANSFERENCIA ENTRE CONTAS"),
+    ];
+    const r = reconcileBank(extrato, razao);
+    const lote = r.matches.find((m) => m.statement.length === 5);
+    expect(lote?.ledger.sort()).toEqual([0, 1]);
+    expect(r.onlyStatement).toEqual([]);
+    expect(r.onlyLedger).toEqual([]);
+  });
+
   it("explica a diferença de saldo pelas pendências", () => {
     const s = reconSummary({ closing: 1000 }, { closing: 2620 }, statement, ledger, r);
     // só no extrato: −120 (tarifa não lançada); só no razão: −1.500 (cheque não compensado)
