@@ -144,14 +144,71 @@ export function ledgerFromTable(t: Table, c: LedgerColumns): Ledger {
   return ledger;
 }
 
-/** Código da conta contábil (ex.: 1.01.01.02.01.01.000006) nas linhas acima do cabeçalho. */
+/**
+ * Código da conta contábil nas linhas acima do cabeçalho.
+ * Contmatic: código numa célula e nome na seguinte (1.01.01.02.01.01.000006 | 5 - BANCO DO BRASIL).
+ * TOTVS: tudo numa célula só ("CONTA - 1.1.0.10.2003 - BANCO ITAU - CC 10312-2").
+ */
 function accountFromRows(rows: unknown[][]): Ledger["account"] {
   for (const row of rows) {
     const cells = row.map((v) => (v === undefined || v === null ? "" : String(v).trim()));
     const i = cells.findIndex((v) => /^\d+(\.\d+){3,}$/.test(v));
     if (i >= 0) return { code: cells[i], name: cells.slice(i + 1).find((v) => v) || undefined };
+    const totvs = totvsAccount(cells);
+    if (totvs) return totvs;
   }
   return undefined;
+}
+
+/** "CONTA - 1.1.0.10.2003 - BANCO ITAU - CC 10312-2" → código e nome. */
+function totvsAccount(cells: unknown[]): Ledger["account"] {
+  for (const cell of cells) {
+    const m = typeof cell === "string" && /^\s*conta\s*[-:]\s*(\d+(?:\.\d+){3,})\s*(?:-\s*(.+))?$/i.exec(cell);
+    if (m) return { code: m[1], name: m[2]?.trim() || undefined };
+  }
+  return undefined;
+}
+
+/**
+ * Razão do TOTVS (Protheus, relatório CTBR400 exportado em planilha): os lançamentos
+ * vêm na aba "Lançamentos Contábeis" e a conta e o saldo anterior ficam em outra aba
+ * ("Totalizadores da Conta"). Lê a aba escolhida e completa com o que estiver nas outras.
+ */
+export function ledgerFromTables(tables: Table[], index: number, c: LedgerColumns): Ledger {
+  const ledger = ledgerFromTable(tables[index], c);
+  const others = tables.filter((_, i) => i !== index);
+  const rowsOf = (t: Table) => [...(t.above ?? []), t.headers, ...t.rows];
+  if (!ledger.account) {
+    for (const t of others) {
+      // Só o formato do TOTVS: a aba "Conta" traz o grupo sintético (1.1.0.10.2), não a conta do banco.
+      const account = rowsOf(t).map(totvsAccount).find(Boolean);
+      if (account) {
+        ledger.account = account;
+        break;
+      }
+    }
+  }
+  // Saldo anterior escrito numa célula: "SALDO ANTERIOR:   181.317,70 D". Só confere.
+  for (const t of others) {
+    const cell = rowsOf(t)
+      .flat()
+      .find((v) => typeof v === "string" && /saldo anterior\s*:?\s*-?[\d.]+,\d{2}/i.test(v));
+    if (typeof cell !== "string") continue;
+    const opening = signedBalance(cell.replace(/^.*?saldo anterior\s*:?\s*/i, ""));
+    if (opening === undefined) break;
+    if (ledger.opening === undefined) {
+      ledger.opening = opening;
+      if (ledger.closing === undefined) {
+        ledger.closing = Math.round((opening + ledger.entries.reduce((s, e) => s + e.amount, 0)) * 100) / 100;
+      }
+    } else if (Math.abs(ledger.opening - opening) > 0.009) {
+      ledger.warnings.push(
+        `O saldo anterior da aba "${t.name}" (${opening.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}) não bate com o calculado pelos lançamentos.`,
+      );
+    }
+    break;
+  }
+  return ledger;
 }
 
 /** Razão em PDF: linhas com data + valores; débito/crédito/saldo pelas colunas do cabeçalho. */

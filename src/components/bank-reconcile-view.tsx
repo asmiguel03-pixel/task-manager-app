@@ -10,13 +10,14 @@ import {
   ledgerForPeriod,
   statementRange,
   ledgerFromPdfLines,
-  ledgerFromTable,
+  ledgerFromTables,
   reconcileBank,
   reconSummary,
   type Ledger,
   type LedgerColumns,
 } from "@/lib/bank-reconcile";
 import { readStatementPdf, type Statement } from "@/lib/bank-statement";
+import { statementFromTables } from "@/lib/bank-statement-sheet";
 import { readPdfLines } from "@/lib/pdf-read";
 import { parseDelimited, tableFromSheet, type Table } from "@/lib/reconcile";
 import { formatBR } from "@/lib/work-tools";
@@ -139,7 +140,8 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
   const openStatement = async (file: File) => {
     setStatementError("");
     try {
-      const data = await readStatementPdf(file);
+      // PDF pelo layout do banco; Excel/CSV pelo cabeçalho (Data, Lançamento, Valor, Saldo).
+      const data = /\.pdf$/i.test(file.name) ? await readStatementPdf(file) : statementFromTables(await loadTables(file), file.name);
       setStatement({ fileName: file.name, data });
     } catch (e) {
       setStatement(null);
@@ -180,7 +182,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
   const fullLedger: Ledger | undefined = useMemo(() => {
     if (!ledgerFile) return undefined;
     if (ledgerFile.kind === "pdf") return ledgerFile.ledger;
-    return ledgerFromTable(ledgerFile.tables[ledgerFile.tableIndex], ledgerFile.columns);
+    return ledgerFromTables(ledgerFile.tables, ledgerFile.tableIndex, ledgerFile.columns);
   }, [ledgerFile]);
 
   const st = statement?.data;
@@ -226,7 +228,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
     <div className="flex flex-col gap-5">
       <p className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400">
         <Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
-        Suba o extrato em PDF e o razão da conta banco. O app lê o extrato, cruza com o razão por valor e data e monta a
+        Suba o extrato (PDF ou Excel) e o razão da conta banco. O app lê o extrato, cruza com o razão por valor e data e monta a
         conciliação. Os arquivos são lidos só no seu navegador — nada é enviado nem salvo.
       </p>
 
@@ -234,9 +236,9 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
         <section className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <span className="flex size-6 items-center justify-center rounded-full bg-indigo-600 text-xs text-white">1</span>
-            Extrato do banco (PDF)
+            Extrato do banco (PDF ou Excel)
           </h3>
-          <DropZone id={`${uid}-st`} label={statement?.fileName || "Escolher o extrato em PDF"} accept=".pdf" onFile={openStatement} />
+          <DropZone id={`${uid}-st`} label={statement?.fileName || "Escolher o extrato (PDF, Excel ou CSV)"} accept=".pdf,.xlsx,.csv,.txt" onFile={openStatement} />
           {statementError && <p className="text-sm text-red-600 dark:text-red-400">{statementError}</p>}
           {st && (
             <>
@@ -280,7 +282,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
         <section className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <span className="flex size-6 items-center justify-center rounded-full bg-indigo-600 text-xs text-white">2</span>
-            Razão da conta banco (Contmatic)
+            Razão da conta banco (Contmatic ou TOTVS)
           </h3>
           <DropZone
             id={`${uid}-lg`}
@@ -293,7 +295,7 @@ export function BankReconcileView({ toast }: { toast: (message: string, kind?: "
               autoFocus
               rows={4}
               className={cx(inputCls, "font-mono text-xs")}
-              placeholder="Cole aqui o razão do mês (Ctrl+V), copiado do Contmatic ou do Excel, com o cabeçalho."
+              placeholder="Cole aqui o razão do mês (Ctrl+V), copiado do Contmatic, do TOTVS ou do Excel, com o cabeçalho."
               onPaste={(e) => {
                 e.preventDefault();
                 pasteLedger(e.clipboardData.getData("text"));

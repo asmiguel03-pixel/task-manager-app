@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { bestLedgerTable, guessLedgerColumns, ledgerForPeriod, ledgerFromTable, statementRange, reconcileBank, reconSummary, type LedgerEntry } from "./bank-reconcile";
+import { bestLedgerTable, guessLedgerColumns, ledgerForPeriod, ledgerFromTable, ledgerFromTables, statementRange, reconcileBank, reconSummary, type LedgerEntry } from "./bank-reconcile";
 import type { StatementEntry } from "./bank-statement";
 import { exportBankXlsx, exportStatementsXlsx } from "./bank-export";
 import { tableFromSheet } from "./reconcile";
+import { statementFromTables } from "./bank-statement-sheet";
 import { readXlsx } from "./xlsx-read";
 import type { CellValue } from "./xlsx-read";
 
@@ -232,6 +233,103 @@ describe("razão no layout do Contmatic", () => {
     expect(capa.get(9)?.get(2)).toBe("1.01.01.02.01.01.000006");
     expect(capa.get(12)?.get(7)).toBe(1200);
     expect(capa.get(17)?.get(8)).toBe(0);
+  });
+});
+
+describe("razão no layout do TOTVS", () => {
+  const sheet = (name: string, data: CellValue[][]) => ({
+    name,
+    hidden: false,
+    rows: new Map(data.map((r, i) => [i + 1, new Map(r.map((v, j) => [j, v] as [number, CellValue]).filter(([, v]) => v !== ""))])),
+  });
+  const parametros = sheet("Parametros", [["Parametros"], ["Pergunta", "Resposta"], ["Pergunta 01 : Da Conta ?", "110102003"], ["Pergunta 03 : Da Data ?", "01/09/2026"]]);
+  const conta = sheet("Conta", [["Conta"], ["CONTA", "DESCRICAO"], ["1.1.0.10.2", "- BANCOS CONTA MOVIMENTO"]]);
+  const lanc = sheet("Lançamentos Contábeis", [
+    ["CONTA", "DATA", "LOTE/SUB/DOC/LINHA", "HISTORICO", "C/PARTIDA", "FILIAL DE ORIGEM", "C CUSTO", "ITEM CONTA", "COD CL VAL", "DEBITO", "CREDITO", "SALDO ATUAL"],
+    ["110102003", 46266, "008850001000001001", "BX REF NF/000001-1 FORNECEDOR A", "2.1.0.20.1001", "010101", "", "", "", 0, 890, "1.110,00 D"],
+    ["110102003", 46266, "008850001000001019", "TRANSFERENCIA ENTRE CONTAS", "", "010101", "", "", "", 1977.48, 0, "3.087,48 D"],
+    ["110102003", 46295, "008850001000001049", "REND PAGO APLIC AUT", "6.1.0.10.1001", "010101", "", "", "", 5.33, 0, "3.092,81 D"],
+  ]);
+  const totais = sheet("Totalizadores da Conta", [["Totalizadores da Conta"], [""], ["CONTA - 1.1.0.10.2003 - BANCO EXEMPLO - CC 12345-6", "SALDO ANTERIOR:          2.000,00 D"]]);
+
+  it("acha a aba de lançamentos, a conta e o saldo anterior nas outras abas", () => {
+    const tables = [parametros, conta, lanc, totais].map((s) => tableFromSheet(s)).filter((t): t is NonNullable<typeof t> => !!t);
+    const i = bestLedgerTable(tables);
+    expect(tables[i].name).toBe("Lançamentos Contábeis");
+    const c = guessLedgerColumns(tables[i].headers);
+    expect([c.date, c.description, c.debit, c.credit, c.balance]).toEqual([1, 3, 9, 10, 11]);
+    const ledger = ledgerFromTables(tables, i, c);
+    expect(ledger.account).toEqual({ code: "1.1.0.10.2003", name: "BANCO EXEMPLO - CC 12345-6" });
+    expect(ledger.opening).toBe(2000);
+    expect(ledger.closing).toBe(3092.81);
+    expect(ledger.entries.map((e) => e.amount)).toEqual([-890, 1977.48, 5.33]);
+    expect(ledger.entries[0].date).toBe("2026-09-01");
+    expect(ledger.warnings).toEqual([]);
+  });
+
+  it("avisa quando o saldo anterior da aba de totais não bate", () => {
+    const outro = sheet("Totalizadores da Conta", [["CONTA - 1.1.0.10.2003 - BANCO EXEMPLO", "SALDO ANTERIOR: 1.000,00 D"]]);
+    const tables = [lanc, outro].map((s) => tableFromSheet(s)).filter((t): t is NonNullable<typeof t> => !!t);
+    const ledger = ledgerFromTables(tables, 0, guessLedgerColumns(tables[0].headers));
+    expect(ledger.warnings.length).toBe(1);
+  });
+});
+
+describe("extrato em planilha", () => {
+  const sheet = (name: string, data: CellValue[][]) => ({
+    name,
+    hidden: false,
+    rows: new Map(data.map((r, i) => [i + 1, new Map(r.map((v, j) => [j, v] as [number, CellValue]).filter(([, v]) => v !== ""))])),
+  });
+  const tables = (...sheets: ReturnType<typeof sheet>[]) => sheets.map((s) => tableFromSheet(s)).filter((t): t is NonNullable<typeof t> => !!t);
+
+  it("Itaú: valor com sinal, razão social no histórico e linhas de saldo do dia", () => {
+    const itau = sheet("Lançamentos", [
+      ["Atualização:", "19/10/2026 10:04:07"],
+      ["Nome:", "EMPRESA EXEMPLO LTDA"],
+      ["Agência:", "0001"],
+      ["Conta:", "0012345-6"],
+      ["Lançamentos"],
+      ["Periodo:", "01/09/2026 até 30/09/2026"],
+      ["Data", "Lançamento", "Razão Social", "CPF/CNPJ", "Valor (R$)", "Saldo (R$)"],
+      ["31/08/2026", "SALDO ANTERIOR", "", "", "", 1000],
+      ["01/09/2026", "RECEBIMENTO REDE VISA", "REDECARD S.A.", "01.425.787/0001-04", 500, ""],
+      ["01/09/2026", "BOLETO PAGO", "FORNECEDOR A LTDA", "00.000.000/0001-00", -200.5, ""],
+      ["01/09/2026", "SALDO TOTAL DISPONÍVEL DIA", "", "", "", 1299.5],
+      ["30/09/2026", "RENDIMENTOS REND PAGO APLIC AUT", "", "", 5.33, ""],
+      ["30/09/2026", "SALDO TOTAL DISPONÍVEL DIA", "", "", "", 1304.83],
+    ]);
+    const st = statementFromTables(tables(itau), "Extrato_Setembro_-_Ita_.xlsx");
+    expect(st.bank).toBe("Itaú");
+    expect(st.account).toBe("Ag. 0001 · C/C 0012345-6");
+    expect(st.period).toBe("01/09/2026 até 30/09/2026");
+    expect(st.opening).toBe(1000);
+    expect(st.closing).toBe(1304.83);
+    expect(st.entries.map((e) => e.amount)).toEqual([500, -200.5, 5.33]);
+    expect(st.entries[1].description).toBe("BOLETO PAGO · FORNECEDOR A LTDA");
+    expect(st.warnings).toEqual([]);
+  });
+
+  it("Crédito/Débito em colunas, do mais novo para o mais antigo", () => {
+    const outro = sheet("Extrato", [
+      ["Data", "Histórico", "Docto.", "Crédito (R$)", "Débito (R$)", "Saldo (R$)"],
+      ["05/10/2026", "TARIFA", "", "", "-10,00", "1.290,00"],
+      ["03/10/2026", "PIX RECEBIDO", "123", "300,00", "", "1.300,00"],
+      ["01/10/2026", "SALDO ANTERIOR", "", "", "", "1.000,00"],
+    ]);
+    const st = statementFromTables(tables(outro), "extrato.xlsx");
+    expect(st.entries.map((e) => [e.date, e.amount])).toEqual([
+      ["2026-10-03", 300],
+      ["2026-10-05", -10],
+    ]);
+    expect(st.opening).toBe(1000);
+    expect(st.closing).toBe(1290);
+    expect(st.entries[0].doc).toBe("123");
+    expect(st.warnings).toEqual([]);
+  });
+
+  it("avisa quando a planilha não tem cabeçalho de extrato", () => {
+    expect(() => statementFromTables(tables(sheet("X", [["Nome", "Telefone"], ["A", "1"]])))).toThrow();
   });
 });
 
